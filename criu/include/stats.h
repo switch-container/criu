@@ -1,5 +1,6 @@
 #ifndef __CR_STATS_H__
 #define __CR_STATS_H__
+#include <sys/time.h>
 
 enum {
 	TIME_FREEZING,
@@ -14,9 +15,17 @@ enum {
 enum {
 	TIME_FORK,
 	TIME_RESTORE,
+	TIME_RESTORE_PREPARE_NS,
+	// root task restore shared resource (e.g., mm )
+	TIME_RESTORE_PREPARE_SHARED,
+	TIME_RESTORE_PREPARE_CGROUP,
+	TIME_RESTORE_RUN_SET_NS_SCRIPT,
+	TIME_AFTER_RESTORE,
 
 	RESTORE_TIME_NS_STATS,
 };
+
+extern const char* RESTORE_TIME_MAP [RESTORE_TIME_NS_STATS];
 
 extern void timing_start(int t);
 extern void timing_stop(int t);
@@ -52,5 +61,8 @@ extern void cnt_sub(int c, unsigned long val);
 
 extern int init_stats(int what);
 extern void write_stats(int what);
+extern void print_restore_timing(void);
+extern long timeval_to_us(const struct timeval *tv);
+extern const struct timeval *get_timing_start(int t);
 
 #endif /* __CR_STATS_H__ */

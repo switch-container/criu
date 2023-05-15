@@ -413,6 +413,10 @@ static int setup_opts_from_req(int sk, CriuOpts *req)
 	if (req->has_unprivileged)
 		opts.unprivileged = req->unprivileged;
 
+	if (req->has_switch_) {
+		opts.switch_ = req->switch_;
+	}
+
 	if (check_caps())
 		return 1;
 

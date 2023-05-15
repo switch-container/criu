@@ -1,3 +1,4 @@
+#include <sys/types.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/time.h>
@@ -28,6 +29,16 @@ struct restore_stats {
 
 struct dump_stats *dstats;
 struct restore_stats *rstats;
+
+const char *RESTORE_TIME_MAP[RESTORE_TIME_NS_STATS] = {
+	[TIME_FORK] = "TIME_FORK",
+	[TIME_RESTORE] = "TIME_RESTORE",
+	[TIME_RESTORE_PREPARE_NS] = "TIME_RESTORE_PREPARE_NS",
+	[TIME_RESTORE_PREPARE_SHARED] = "TIME_RESTORE_PREPARE_SHARED",
+	[TIME_RESTORE_PREPARE_CGROUP] = "TIME_RESTORE_PREPARE_CGROUP",
+	[TIME_RESTORE_RUN_SET_NS_SCRIPT] = "TIME_RESTORE_RUN_SET_NS_SCRIPT",
+	[TIME_AFTER_RESTORE] = "TIME_AFTER_RESTORE",
+};
 
 void cnt_add(int c, unsigned long val)
 {
@@ -88,12 +99,36 @@ static struct timing *get_timing(int t)
 	return NULL;
 }
 
+long timeval_to_us(const struct timeval *tv)
+{
+	return tv->tv_sec * USEC_PER_SEC + tv->tv_usec;
+}
+
+void print_restore_timing(void)
+{
+	struct timing *tm;
+	int i;
+
+	for (i = 0; i < RESTORE_TIME_NS_STATS; i++) {
+		tm = get_timing(i);
+		pr_info("METRIC time for retore %s: %ld us\n", RESTORE_TIME_MAP[i], timeval_to_us(&tm->total));
+	}
+}
+
 void timing_start(int t)
 {
 	struct timing *tm;
 
 	tm = get_timing(t);
 	gettimeofday(&tm->start, NULL);
+}
+
+const struct timeval *get_timing_start(int t)
+{
+	struct timing *tm;
+
+	tm = get_timing(t);
+	return &tm->start;
 }
 
 void timing_stop(int t)

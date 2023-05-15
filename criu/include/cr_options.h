@@ -236,6 +236,9 @@ struct cr_options {
 	 * explicitly request it as it comes with many limitations.
 	 */
 	int unprivileged;
+
+	// if CRIU is restore to an existing namespace
+	bool switch_;
 };
 
 extern struct cr_options opts;
@@ -244,5 +247,6 @@ extern char *rpc_cfg_file;
 extern int parse_options(int argc, char **argv, bool *usage_error, bool *has_exec_cmd, int state);
 extern int check_options(void);
 extern void init_opts(void);
+extern void print_opts(void);
 
 #endif /* __CR_OPTIONS_H__ */

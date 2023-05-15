@@ -1,6 +1,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/mount.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -51,4 +52,20 @@ err_close:
 	if (fd >= 0)
 		__sys(close)(fd);
 	return -1;
+}
+
+long interval_from(const struct timeval *from)
+{
+	struct timeval now;
+	long interval;
+	int ret;
+
+	ret = __sys(gettimeofday)(&now, NULL);
+	if (ret) {
+		__pr_perror("Can't sys_gettimeofday");
+		return -1L;
+	}
+	interval = now.tv_sec * USEC_PER_SEC + now.tv_usec - (from->tv_sec * USEC_PER_SEC + from->tv_usec);
+
+	return interval;
 }

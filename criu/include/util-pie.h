@@ -15,5 +15,10 @@
 #include "common/scm.h"
 
 extern int open_detach_mount(char *dir);
+extern long interval_from(const struct timeval* start);
+
+#ifndef USEC_PER_SEC
+#define USEC_PER_SEC 1000000L
+#endif
 
 #endif /* __CR_UTIL_NET_H__ */

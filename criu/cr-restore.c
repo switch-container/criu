@@ -1,7 +1,9 @@
+#include "log.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <signal.h>
 #include <limits.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
@@ -886,7 +888,11 @@ static int restore_one_alive_task(int pid, CoreEntry *core)
 {
 	unsigned args_len;
 	struct task_restore_args *ta;
+	struct timeval start, end;
+	long interval;
 	pr_info("Restoring resources\n");
+
+	gettimeofday(&start, NULL);
 
 	rst_mem_switch_to_private();
 
@@ -903,12 +909,14 @@ static int restore_one_alive_task(int pid, CoreEntry *core)
 	if (prepare_file_locks(pid))
 		return -1;
 
+	// [CR-MEM]
 	if (open_vmas(current))
 		return -1;
 
 	if (prepare_aios(current, ta))
 		return -1;
 
+	// [CR-MEM]
 	if (fixup_sysv_shmems())
 		return -1;
 
@@ -956,9 +964,12 @@ static int restore_one_alive_task(int pid, CoreEntry *core)
 	if (prepare_itimers(pid, ta, core) < 0)
 		return -1;
 
+	// This two method spend little time
+	// [CR-MEM]: copy mm to ta (already read before at prepare_mm_pid)
 	if (prepare_mm(pid, ta))
 		return -1;
 
+	// [CR-MEM] copy vma_iovec and vma_entry and set the image fd
 	if (prepare_vmas(current, ta))
 		return -1;
 
@@ -971,6 +982,11 @@ static int restore_one_alive_task(int pid, CoreEntry *core)
 
 	if (setup_uffd(pid, ta))
 		return -1;
+
+	gettimeofday(&end, NULL);
+
+	interval = timeval_to_us(&end) - timeval_to_us(&start);
+	pr_debug("METRIC [pid:%d] prepare task_restore_args spent %ld us\n", pid, interval);
 
 	return sigreturn_restore(pid, ta, args_len, core);
 }
@@ -1763,6 +1779,8 @@ static int restore_task_with_children(void *_arg)
 	struct cr_clone_arg *ca = _arg;
 	pid_t pid;
 	int ret;
+	struct timeval start, end;
+	long interval;
 
 	current = ca->item;
 
@@ -1825,6 +1843,7 @@ static int restore_task_with_children(void *_arg)
 			goto err;
 
 		/* Wait prepare_userns */
+		/* we also have to wait for set_up_ns to finish */
 		if (restore_finish_ns_stage(CR_STATE_ROOT_TASK, CR_STATE_PREPARE_NAMESPACES) < 0)
 			goto err;
 	}
@@ -1838,8 +1857,13 @@ static int restore_task_with_children(void *_arg)
 	 * we will only move the root one there, others will
 	 * just have it inherited.
 	 */
+	
+	gettimeofday(&start, NULL);
 	if (prepare_task_cgroup(current) < 0)
 		goto err;
+	gettimeofday(&end, NULL);
+	interval = timeval_to_us(&end) - timeval_to_us(&start);
+	pr_debug("METRIC [pid:%d] prepare task cgroup spent %ld us\n", pid, interval);
 
 	/* Restore root task */
 	if (current->parent == NULL) {
@@ -1864,14 +1888,19 @@ static int restore_task_with_children(void *_arg)
 		if (collect_images(before_ns_cinfos, ARRAY_SIZE(before_ns_cinfos)))
 			goto err;
 
+		timing_start(TIME_RESTORE_PREPARE_NS);
 		if (prepare_namespace(current, ca->clone_flags))
 			goto err;
+		timing_stop(TIME_RESTORE_PREPARE_NS);
 
 		if (restore_finish_ns_stage(CR_STATE_PREPARE_NAMESPACES, CR_STATE_FORKING) < 0)
 			goto err;
 
+		timing_start(TIME_RESTORE_PREPARE_SHARED);
 		if (root_prepare_shared())
 			goto err;
+
+		timing_stop(TIME_RESTORE_PREPARE_SHARED);
 
 		if (populate_root_fd_off())
 			goto err;
@@ -2229,6 +2258,9 @@ static int restore_root_task(struct pstree_item *init)
 	int ret, fd, mnt_ns_fd = -1;
 	int root_seized = 0;
 	struct pstree_item *item;
+	const struct timeval* tv;
+	struct timeval now;
+	long interval;
 
 	ret = run_scripts(ACT_PRE_RESTORE);
 	if (ret != 0) {
@@ -2327,7 +2359,9 @@ static int restore_root_task(struct pstree_item *init)
 	if (ret)
 		goto out_kill;
 
+	timing_start(TIME_RESTORE_RUN_SET_NS_SCRIPT);
 	ret = run_scripts(ACT_SETUP_NS);
+	timing_stop(TIME_RESTORE_RUN_SET_NS_SCRIPT);
 	if (ret)
 		goto out_kill;
 
@@ -2444,10 +2478,18 @@ skip_ns_bouncing:
 
 	timing_stop(TIME_RESTORE);
 
+	timing_start(TIME_AFTER_RESTORE);
 	if (catch_tasks(root_seized)) {
 		pr_err("Can't catch all tasks\n");
 		goto out_kill_network_unlocked;
 	}
+	tv = get_timing_start(TIME_AFTER_RESTORE);
+	if (gettimeofday(&now, NULL)) {
+		pr_err("gettimeofday failed after catch_task\n");
+	}
+	interval = timeval_to_us(&now) - timeval_to_us(tv);
+	pr_debug("METRIC catch task spent %ld us", interval);
+
 
 	if (lazy_pages_finish_restore())
 		goto out_kill_network_unlocked;
@@ -2496,11 +2538,13 @@ skip_ns_bouncing:
 	if (restore_rseq_cs())
 		pr_err("Unable to restore rseq_cs state\n");
 
+	timing_stop(TIME_AFTER_RESTORE);
 	/* Detaches from processes and they continue run through sigreturn. */
 	if (finalize_restore_detach())
 		goto out_kill_network_unlocked;
 
 	pr_info("Restore finished successfully. Tasks resumed.\n");
+	print_restore_timing();
 	write_stats(RESTORE_STATS);
 
 	/* This has the effect of dismissing the image streamer */
@@ -2584,6 +2628,8 @@ int cr_restore_tasks(void)
 {
 	int ret = -1;
 
+	print_opts();
+
 	if (init_service_fd())
 		return 1;
 
@@ -2630,8 +2676,10 @@ int cr_restore_tasks(void)
 	if (crtools_prepare_shared() < 0)
 		goto err;
 
+	timing_start(TIME_RESTORE_PREPARE_CGROUP);
 	if (prepare_cgroup())
 		goto clean_cgroup;
+	timing_stop(TIME_RESTORE_PREPARE_CGROUP);
 
 	if (criu_signals_setup() < 0)
 		goto clean_cgroup;
@@ -3557,6 +3605,8 @@ static void *restorer_munmap_addr(CoreEntry *core, void *restorer_blob)
 	return restorer_sym(restorer_blob, arch_export_unmap);
 }
 
+// when entering this method
+// the stage = CR_STATE_RESTORE
 static int sigreturn_restore(pid_t pid, struct task_restore_args *task_args, unsigned long alen, CoreEntry *core)
 {
 	void *mem = MAP_FAILED;
@@ -3583,7 +3633,11 @@ static int sigreturn_restore(pid_t pid, struct task_restore_args *task_args, uns
 
 	sigset_t blockmask;
 
+	struct timeval start, end;
+	long interval;
+
 	pr_info("Restore via sigreturn\n");
+	gettimeofday(&start, NULL);
 
 	/* pr_info_vma_list(&self_vma_list); */
 
@@ -3945,6 +3999,10 @@ static int sigreturn_restore(pid_t pid, struct task_restore_args *task_args, uns
 	 * An indirect call to task_restore, note it never returns
 	 * and restoring core is extremely destructive.
 	 */
+
+	gettimeofday(&end, NULL);
+	interval = timeval_to_us(&end) - timeval_to_us(&start);
+	pr_debug("METRIC [pid:%d] remap for restorer spent %ld us\n", pid, interval);
 
 	JUMP_TO_RESTORER_BLOB(new_sp, restore_task_exec_start, task_args);
 

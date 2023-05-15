@@ -1134,3 +1134,87 @@ int check_options(void)
 
 	return 0;
 }
+
+#define show_int_field(field_name) pr_info(#field_name " is %d\n", opts.field_name)
+#define show_str_field(field_name) pr_info(#field_name " is %s\n", opts.field_name)
+
+static void print_external(void)
+{
+	struct external *ext;
+	char output[4096];
+	int length = 0;
+	length += sprintf(output,"external: ");
+	list_for_each_entry(ext, &opts.external, node) {
+		length += sprintf(output + length, "%s ", ext->id);
+	}
+	pr_info("%s\n", output);
+}
+
+static void print_join_ns(void)
+{
+	struct join_ns *jn;
+	char output[4096];
+	int length = 0;
+	length += sprintf(output, "join_ns: ");
+	list_for_each_entry(jn, &opts.join_ns, list) {
+		length += sprintf(output + length, "[%s %s] ", jn->nd->str, jn->ns_file);
+	}
+	pr_info("%s\n", output);
+}
+
+static void print_new_cgroup_roots(void)
+{
+	struct cg_root_opt *o;
+	char output[4096];
+	int length = 0;
+	length += sprintf(output, "new cgroup roots: ");
+	list_for_each_entry(o, &opts.new_cgroup_roots, node)  {
+		length += sprintf(output + length, "[%s %s] ", o->controller, o->newroot);
+	}
+	pr_info("%s\n", output);
+}
+
+void print_opts(void)
+{
+	#undef LOG_PREFIX
+	#define LOG_PREFIX "opt -"
+	show_int_field(final_state);
+	show_int_field(restore_sibling);
+	show_int_field(ext_unix_sk);
+	show_int_field(shell_job);
+	show_int_field(handle_file_locks);
+	show_int_field(tcp_established_ok);
+	show_int_field(tcp_close);
+	show_int_field(evasive_devices);
+	show_int_field(link_remap_ok);
+	show_int_field(log_file_per_pid);
+	show_int_field(swrk_restore);
+	show_int_field(swrk_restore);
+	show_str_field(output);
+	show_str_field(root);
+	show_str_field(pidfile);
+	show_str_field(freeze_cgroup);
+	print_external();
+	print_join_ns();
+	show_str_field(libdir);
+	show_int_field(auto_dedup);
+	show_int_field(manage_cgroups);
+	show_str_field(new_global_cg_root);
+	show_str_field(cgroup_props);
+	show_str_field(cgroup_props_file);
+	print_new_cgroup_roots();
+	show_str_field(cgroup_yard);
+	show_int_field(autodetect_ext_mounts);
+	show_int_field(enable_external_sharing);
+	show_int_field(enable_external_masters);
+	show_int_field(aufs);
+	show_int_field(overlayfs);
+	show_int_field(ghost_fiemap);
+	show_int_field(empty_ns);
+	show_str_field(work_dir);
+	show_int_field(orphan_pts_master);
+	show_str_field(imgs_dir);
+	show_int_field(mode);
+	show_str_field(argv_0);
+	#undef LOG_PREFIX
+}

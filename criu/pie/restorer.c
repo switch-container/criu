@@ -1,3 +1,4 @@
+#include "compel/plugins/include/uapi/std/syscall-64.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -50,6 +51,8 @@
 
 #include "shmem.h"
 #include "restorer.h"
+
+#include "util-pie.h"
 
 #ifndef PR_SET_PDEATHSIG
 #define PR_SET_PDEATHSIG 1
@@ -1504,6 +1507,8 @@ int cleanup_current_inotify_events(struct task_restore_args *task_args)
  */
 long __export_restore_task(struct task_restore_args *args)
 {
+	// when entering this method
+	// the stage = CR_STATE_RESTORE
 	long ret = -1;
 	int i;
 	VmaEntry *vma_entry;
@@ -1516,6 +1521,8 @@ long __export_restore_task(struct task_restore_args *args)
 	pid_t my_pid = sys_getpid();
 	rt_sigaction_t act;
 	bool has_vdso_proxy;
+	struct timeval start;
+	long interval;
 
 	bootstrap_start = args->bootstrap_start;
 	bootstrap_len = args->bootstrap_len;
@@ -1590,9 +1597,12 @@ long __export_restore_task(struct task_restore_args *args)
 	 */
 	unregister_libc_rseq(&args->libc_rseq);
 
+	// from this on, we lose all vmas except premap and restorer
 	if (unmap_old_vmas((void *)args->premmapped_addr, args->premmapped_len, bootstrap_start, bootstrap_len,
 			   args->task_size))
 		goto core_restore_end;
+	
+	sys_gettimeofday(&start, NULL);
 
 	/* Map vdso that wasn't parked */
 	if (args->can_map_vdso && (map_vdso(args, args->compatible_mode) < 0))
@@ -1784,6 +1794,12 @@ long __export_restore_task(struct task_restore_args *args)
 		}
 	}
 
+	interval = interval_from(&start);
+	if (interval < 0) {
+		goto core_restore_end;
+	}
+	pr_debug("METRIC [pid:%d] in restorer to restore memory, spent %ld us\n", my_pid, interval);
+
 	/*
 	 * Tune up the task fields.
 	 */
@@ -1897,6 +1913,8 @@ long __export_restore_task(struct task_restore_args *args)
 	 * +--------------------------------------------------------------------------+
 	 */
 
+	sys_gettimeofday(&start, NULL);
+
 	if (args->nr_threads > 1) {
 		struct thread_restore_args *thread_args = args->thread_args;
 		long clone_flags = CLONE_VM | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE_SYSVSEM | CLONE_FS;
@@ -1970,6 +1988,14 @@ long __export_restore_task(struct task_restore_args *args)
 		if (fd >= 0)
 			sys_close(fd);
 	}
+
+	interval = interval_from(&start);
+	if (interval < 0) {
+		goto core_restore_end;
+	}
+	pr_debug("METRIC [pid:%d] in restorer to restore threads spent %ld us\n", my_pid, interval);
+
+	sys_gettimeofday(&start, NULL);
 
 	restore_rlims(args);
 
@@ -2085,6 +2111,12 @@ long __export_restore_task(struct task_restore_args *args)
 	 * Sigframe stack.
 	 */
 	new_sp = (long)rt_sigframe + RT_SIGFRAME_OFFSET(rt_sigframe);
+
+	interval = interval_from(&start);
+	if (interval < 0) {
+		goto core_restore_end;
+	}
+	pr_debug("METRIC [pid:%d] in restorer to after restore threads spent %ld us\n", my_pid, interval);
 
 	/*
 	 * Prepare the stack and call for sigreturn,

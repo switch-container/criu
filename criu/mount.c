@@ -3776,6 +3776,7 @@ int prepare_mnt_ns(void)
 		print_ns_root(nsid, 0, path, sizeof(path) - 1);
 		if (cr_pivot_root(path))
 			goto err;
+		pr_debug("cr_pivot_root for %s finish\n", path);
 
 		/* root fd is used to restore file mappings */
 		fd = open_proc(PROC_SELF, "root");
