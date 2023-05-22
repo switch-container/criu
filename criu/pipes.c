@@ -235,7 +235,7 @@ static int reopen_pipe(int fd, int flags)
 			/* It may be an external pipe from an another userns */
 			ret = userns_call(userns_reopen, UNS_FDOUT, &flags, sizeof(flags), fd);
 		} else
-			pr_perror("Unable to reopen the pipe %s", path);
+			pr_perror("Unable to reopen the pipe %s flags %d (0%o)", path, flags, flags);
 	}
 	close(fd);
 

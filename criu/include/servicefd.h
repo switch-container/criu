@@ -31,6 +31,8 @@ enum sfd_type {
 	RPC_SK_OFF,
 	FDSTORE_SK_OFF,
 
+	SWITCH_ORIGINAL_MNTNS,
+
 	SERVICE_FD_MAX
 };
 

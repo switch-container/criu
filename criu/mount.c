@@ -3934,9 +3934,14 @@ int mntns_get_root_by_mnt_id(int mnt_id)
 {
 	struct ns_id *mntns = NULL;
 
+	// if (root_ns_mask & CLONE_NEWNS) {
+	// 	mntns = lookup_nsid_by_mnt_id(mnt_id);
+	// 	BUG_ON(mntns == NULL);
+	// }
+	// we use root_item's mnt ns: since most container only keep in one mount namespace
 	if (root_ns_mask & CLONE_NEWNS) {
-		mntns = lookup_nsid_by_mnt_id(mnt_id);
-		BUG_ON(mntns == NULL);
+		mntns = lookup_ns_by_id(root_item->ids->mnt_ns_id, &mnt_ns_desc);
+		BUG_ON(!mntns);
 	}
 
 	return mntns_get_root_fd(mntns);

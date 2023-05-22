@@ -627,7 +627,7 @@ int cr_system_userns(int in, int out, int err, char *cmd, char *const argv[], un
 		/* We can't use pr_error() as log file fd is closed. */
 		fprintf(stderr, "Error (%s:%d): " LOG_PREFIX "execvp(\"%s\", ...) failed: %s\n", __FILE__, __LINE__,
 			cmd, strerror(errno));
-	out_chld:
+out_chld:
 		_exit(1);
 	}
 
@@ -2087,4 +2087,58 @@ int set_opts_cap_eff(void)
 		memcpy(&opts.cap_eff[i], &cap_data[i].effective, sizeof(u32));
 
 	return 0;
+}
+
+int show_dir(char *path)
+{
+	DIR *dir;
+	struct dirent *ent;
+	char full_path[512];
+	char link[512];
+	int nbytes;
+	if ((dir = opendir(path)) != NULL) {
+		/* print all the files and directories within directory */
+		while ((ent = readdir(dir)) != NULL) {
+			if (ent->d_type == DT_LNK) {
+				sprintf(full_path, "%s/%s", path, ent->d_name);
+				nbytes = readlink(full_path, link, 512);
+				if (nbytes < 0) {
+					pr_perror("read link failed");
+					return -1;
+				}
+				pr_debug("symbol link: %s -> %.*s\n", ent->d_name, (int)nbytes, link);
+			} else {
+				pr_debug("[type:%d] %s\n", ent->d_type, ent->d_name);
+			}
+		}
+		closedir(dir);
+	} else {
+		/* could not open directory */
+		pr_perror("could not open %s", path);
+		return -1;
+	}
+
+	return 0;
+}
+
+struct timeval start_metric(void)
+{
+	struct timeval start;
+	if (gettimeofday(&start, NULL)) {
+		pr_err("gettimeofday error!\n");
+	}
+
+	return start;
+}
+// return interval start from tv
+long fini_metric(struct timeval tv) {
+	struct timeval now;
+	long us_now, us_tv;
+	if (gettimeofday(&now, NULL)) {
+		pr_err("gettimeofday error!\n");
+	}
+	us_now = now.tv_sec * USEC_PER_SEC + now.tv_usec;
+	us_tv = tv.tv_sec * USEC_PER_SEC + tv.tv_usec;
+	
+	return us_now - us_tv;
 }

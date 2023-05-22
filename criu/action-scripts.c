@@ -16,17 +16,30 @@
 #include <sys/un.h>
 #include <sys/socket.h>
 #include "common/scm.h"
+#include "switch.h"
 
 static const char *action_names[ACT_MAX] = {
 	[ACT_PRE_DUMP] = "pre-dump",
 	[ACT_POST_DUMP] = "post-dump",
+	// [roughly 0.8ms for hello_world]
+	// [runc: do nothing]
 	[ACT_PRE_RESTORE] = "pre-restore",
+	// [roughly 1ms for hello_world]
+	// [runc: update process information]
 	[ACT_POST_RESTORE] = "post-restore",
 	[ACT_NET_LOCK] = "network-lock",
 	[ACT_NET_UNLOCK] = "network-unlock",
+	// [roughly 0.8ms for hello_world]
+	// [runc: do nothing in switch mode]
 	[ACT_SETUP_NS] = "setup-namespaces",
+	// [roughly 0.8ms for hello_world]
+	// [runc: do nothing]
 	[ACT_POST_SETUP_NS] = "post-setup-namespaces",
+	// [roughly 0.8ms for hello_world]
+	// [runc: do nothing]
 	[ACT_PRE_RESUME] = "pre-resume",
+	// [roughly 0.8ms for hello_world]
+	// [runc: do nothing]
 	[ACT_POST_RESUME] = "post-resume",
 	[ACT_ORPHAN_PTS_MASTER] = "orphan-pts-master",
 	[ACT_STATUS_READY] = "status-ready",
@@ -122,6 +135,11 @@ int run_scripts(enum script_actions act)
 		return 0;
 
 	if (scripts_mode == SCRIPTS_RPC) {
+		// Aggressive optimization: for runc, we do not need most of the action scripts.
+		// But each rpc will spent about 1ms, so we skip unnecessary rpc action
+		if (opts.switch_ && check_skip_action_scripts_in_switch(act)) {
+			goto out;
+		}
 		ret = rpc_send_fd(act, -1);
 		goto out;
 	}

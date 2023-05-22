@@ -968,41 +968,41 @@ int collect_sockets(struct ns_id *ns)
 	return err;
 }
 
-static uint32_t last_ns_id = 0;
+// static uint32_t last_ns_id = 0;
 
 int set_netns(uint32_t ns_id)
 {
-	struct ns_id *ns;
-	int nsfd;
+	// struct ns_id *ns;
+	// int nsfd;
 
-	if (!(root_ns_mask & CLONE_NEWNET))
-		return 0;
+	// if (!(root_ns_mask & CLONE_NEWNET))
+	// 	return 0;
 
-	if (ns_id == last_ns_id)
-		return 0;
+	// if (ns_id == last_ns_id)
+	// 	return 0;
 
-	/*
-	 * The 0 ns_id means that it was not set. We need
-	 * this to be compatible with old images.
-	 */
-	if (ns_id == 0)
-		ns = net_get_root_ns();
-	else
-		ns = lookup_ns_by_id(ns_id, &net_ns_desc);
-	if (ns == NULL) {
-		pr_err("Unable to find a network namespace\n");
-		return -1;
-	}
-	nsfd = fdstore_get(ns->net.nsfd_id);
-	if (nsfd < 0)
-		return -1;
-	if (setns(nsfd, CLONE_NEWNET)) {
-		pr_perror("Unable to switch a network namespace");
-		close(nsfd);
-		return -1;
-	}
-	last_ns_id = ns_id;
-	close(nsfd);
+	// /*
+	//  * The 0 ns_id means that it was not set. We need
+	//  * this to be compatible with old images.
+	//  */
+	// if (ns_id == 0)
+	// 	ns = net_get_root_ns();
+	// else
+	// 	ns = lookup_ns_by_id(ns_id, &net_ns_desc);
+	// if (ns == NULL) {
+	// 	pr_err("Unable to find a network namespace\n");
+	// 	return -1;
+	// }
+	// nsfd = fdstore_get(ns->net.nsfd_id);
+	// if (nsfd < 0)
+	// 	return -1;
+	// if (setns(nsfd, CLONE_NEWNET)) {
+	// 	pr_perror("Unable to switch a network namespace");
+	// 	close(nsfd);
+	// 	return -1;
+	// }
+	// last_ns_id = ns_id;
+	// close(nsfd);
 
 	return 0;
 }

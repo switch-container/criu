@@ -1564,6 +1564,9 @@ long __export_restore_task(struct task_restore_args *args)
 	std_log_set_start(&args->logstart);
 
 	pr_info("Switched to the restorer %d\n", my_pid);
+	pr_debug("bootstrap start %p len %d vdso len %ld\n",
+		bootstrap_start, bootstrap_len, vdso_rt_size);
+
 
 	if (args->uffd > -1) {
 		pr_debug("lazy-pages: uffd %d\n", args->uffd);
@@ -2105,18 +2108,18 @@ long __export_restore_task(struct task_restore_args *args)
 
 	restore_posix_timers(args);
 
+	interval = interval_from(&start);
+	if (interval < 0) {
+		goto core_restore_end;
+	}
+	pr_debug("METRIC [pid:%d] in restorer to after restore threads spent %ld us\n", my_pid, interval);
+
 	sys_munmap(args->rst_mem, args->rst_mem_size);
 
 	/*
 	 * Sigframe stack.
 	 */
 	new_sp = (long)rt_sigframe + RT_SIGFRAME_OFFSET(rt_sigframe);
-
-	interval = interval_from(&start);
-	if (interval < 0) {
-		goto core_restore_end;
-	}
-	pr_debug("METRIC [pid:%d] in restorer to after restore threads spent %ld us\n", my_pid, interval);
 
 	/*
 	 * Prepare the stack and call for sigreturn,

@@ -409,4 +409,11 @@ extern void util_init(void);
 
 extern char *resolve_mountpoint(char *path);
 
+extern int show_dir(char* path);
+
+// return a timeval as a represent of start
+extern struct timeval start_metric(void);
+// return interval start from tv
+extern long fini_metric(struct timeval tv);
+
 #endif /* __CR_UTIL_H__ */

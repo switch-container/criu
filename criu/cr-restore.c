@@ -101,6 +101,8 @@
 
 #include "cr-errno.h"
 
+#include "switch.h"
+
 #ifndef arch_export_restore_thread
 #define arch_export_restore_thread __export_restore_thread
 #endif
@@ -977,8 +979,9 @@ static int restore_one_alive_task(int pid, CoreEntry *core)
 	 * Sockets have to be restored in their network namespaces,
 	 * so a task namespace has to be restored after sockets.
 	 */
-	if (restore_task_net_ns(current))
-		return -1;
+	// TODO (huang-jl) solve the problem of `set_netns()`
+	// if (restore_task_net_ns(current))
+	// 	return -1;
 
 	if (setup_uffd(pid, ta))
 		return -1;
@@ -1356,6 +1359,7 @@ static inline int fork_with_pid(struct pstree_item *item)
 	bool external_pidns = false;
 	int ret = -1;
 	pid_t pid = vpid(item);
+	int i;
 
 	if (item->pid->state != TASK_HELPER) {
 		if (open_core(pid, &ca.core))
@@ -1441,6 +1445,11 @@ static inline int fork_with_pid(struct pstree_item *item)
 	ca.item = item;
 	ca.clone_flags = rsti(item)->clone_flags;
 
+ 	// we do not need clone new namespace which already switch in
+	for(i = 0; i < MAX_SWITCH_NS; i++) {
+		ca.clone_flags &= ~switch_namespace[i].clone_flag;
+	}
+	// ca.clone_flags &= ~(CLONE_NEWNS | CLONE_NEWUTS);
 	BUG_ON(ca.clone_flags & CLONE_VM);
 
 	pr_info("Forking task with %d pid (flags 0x%lx)\n", pid, ca.clone_flags);
@@ -1819,18 +1828,19 @@ static int restore_task_with_children(void *_arg)
 		 * The root task has to be in its namespaces before executing
 		 * ACT_SETUP_NS scripts, so the root netns has to be created here
 		 */
-		if (root_ns_mask & CLONE_NEWNET) {
-			struct ns_id *ns = net_get_root_ns();
-			if (ns->ext_key)
-				ret = net_set_ext(ns);
-			else
-				ret = unshare(CLONE_NEWNET);
-			if (ret) {
-				pr_perror("Can't unshare net-namespace");
-				goto err;
-			}
-		}
+		// if (root_ns_mask & CLONE_NEWNET) {
+		// 	struct ns_id *ns = net_get_root_ns();
+		// 	if (ns->ext_key)
+		// 		ret = net_set_ext(ns);
+		// 	else
+		// 		ret = unshare(CLONE_NEWNET);
+		// 	if (ret) {
+		// 		pr_perror("Can't unshare net-namespace");
+		// 		goto err;
+		// 	}
+		// }
 
+		// TODO (huang-jl) TIMENS ?
 		if (root_ns_mask & CLONE_NEWTIME) {
 			if (prepare_timens(current->ids->time_ns_id))
 				goto err;
@@ -1857,7 +1867,8 @@ static int restore_task_with_children(void *_arg)
 	 * we will only move the root one there, others will
 	 * just have it inherited.
 	 */
-	
+
+	// TODO (huang-jl) do not need preapre cgroup
 	gettimeofday(&start, NULL);
 	if (prepare_task_cgroup(current) < 0)
 		goto err;
@@ -1867,11 +1878,10 @@ static int restore_task_with_children(void *_arg)
 
 	/* Restore root task */
 	if (current->parent == NULL) {
-		if (join_namespaces()) {
+		if (!opts.switch_ && join_namespaces()) {
 			pr_perror("Join namespaces failed");
 			goto err;
 		}
-
 		pr_info("Calling restore_sid() for init\n");
 		restore_sid();
 
@@ -1880,6 +1890,7 @@ static int restore_task_with_children(void *_arg)
 		 * namespaces and do not care for the rest of the cases.
 		 * Thus -- mount proc at custom location for any new namespace
 		 */
+		// TODO (huang-jl) do not need mount proc
 		if (mount_proc())
 			goto err;
 
@@ -1889,8 +1900,13 @@ static int restore_task_with_children(void *_arg)
 			goto err;
 
 		timing_start(TIME_RESTORE_PREPARE_NS);
-		if (prepare_namespace(current, ca->clone_flags))
+		// if (prepare_namespace(current, ca->clone_flags))
+		// 	goto err;
+
+		if (prepare_mnt_ns_for_switch()) {
 			goto err;
+		}
+
 		timing_stop(TIME_RESTORE_PREPARE_NS);
 
 		if (restore_finish_ns_stage(CR_STATE_PREPARE_NAMESPACES, CR_STATE_FORKING) < 0)
@@ -1909,8 +1925,8 @@ static int restore_task_with_children(void *_arg)
 	if (setup_newborn_fds(current))
 		goto err;
 
-	if (restore_task_mnt_ns(current))
-		goto err;
+	// if (restore_task_mnt_ns(current))
+	// 	goto err;
 
 	if (prepare_mappings(current))
 		goto err;
@@ -1972,7 +1988,7 @@ err:
 	exit(1);
 }
 
-static int attach_to_tasks(bool root_seized)
+__attribute__((unused)) static int attach_to_tasks(bool root_seized)
 {
 	struct pstree_item *item;
 
@@ -2022,10 +2038,15 @@ static int attach_to_tasks(bool root_seized)
 			if (rsti(item)->has_seccomp && ptrace_suspend_seccomp(pid) < 0)
 				pr_err("failed to suspend seccomp, restore will probably fail...\n");
 
-			if (ptrace(PTRACE_CONT, pid, NULL, NULL)) {
-				pr_perror("Unable to resume %d", pid);
+			if (compel_stop_pie(pid, rsti(item)->breakpoint, fault_injected(FI_NO_BREAKPOINTS)) < 0) {
+				pr_perror("Unable to catch tasks %d", pid);
 				return -1;
 			}
+
+			// if (ptrace(PTRACE_CONT, pid, NULL, NULL)) {
+			// 	pr_perror("Unable to resume %d", pid);
+			// 	return -1;
+			// }
 		}
 	}
 
@@ -2060,22 +2081,27 @@ static int restore_rseq_cs(void)
 				return -1;
 			}
 
-			if (!rseqe[i].rseq_cs_pointer || !rseqe[i].rseq_abi_pointer)
+			if (!rseqe[i].rseq_cs_pointer || !rseqe[i].rseq_abi_pointer) {
 				continue;
-
-			if (ptrace_poke_area(
-				    pid, &rseqe[i].rseq_cs_pointer,
-				    decode_pointer(rseqe[i].rseq_abi_pointer + offsetof(struct criu_rseq, rseq_cs)),
-				    sizeof(uint64_t))) {
-				pr_err("Can't restore rseq_cs pointer (pid: %d)\n", pid);
+			} else {
+				pr_err("restore_rseq_cs pid %d: for switch do not support rseq\n", pid);
 				return -1;
 			}
+
+			// if (ptrace_poke_area(
+			// 	    pid, &rseqe[i].rseq_cs_pointer,
+			// 	    decode_pointer(rseqe[i].rseq_abi_pointer + offsetof(struct criu_rseq, rseq_cs)),
+			// 	    sizeof(uint64_t))) {
+			// 	pr_err("Can't restore rseq_cs pointer (pid: %d)\n", pid);
+			// 	return -1;
+			// }
 		}
 	}
 
 	return 0;
 }
 
+__attribute__((unused))
 static int catch_tasks(bool root_seized)
 {
 	struct pstree_item *item;
@@ -2115,6 +2141,7 @@ static int catch_tasks(bool root_seized)
 	return 0;
 }
 
+__attribute__((unused))
 static void finalize_restore(void)
 {
 	struct pstree_item *item;
@@ -2149,6 +2176,7 @@ static void finalize_restore(void)
 	}
 }
 
+__attribute__((unused))
 static int finalize_restore_detach(void)
 {
 	struct pstree_item *item;
@@ -2258,9 +2286,8 @@ static int restore_root_task(struct pstree_item *init)
 	int ret, fd, mnt_ns_fd = -1;
 	int root_seized = 0;
 	struct pstree_item *item;
-	const struct timeval* tv;
-	struct timeval now;
-	long interval;
+	// const struct timeval *tv;
+	// struct timeval metric;
 
 	ret = run_scripts(ACT_PRE_RESTORE);
 	if (ret != 0) {
@@ -2278,6 +2305,12 @@ static int restore_root_task(struct pstree_item *init)
 	if (ret < 0)
 		return -1;
 
+	// we join switch namespace after install proc fd
+	stash_criu_original_mntns();
+	if (join_switch_namespace()) {
+		return -1;
+	}
+
 	/*
 	 * FIXME -- currently we assume that all the tasks live
 	 * in the same set of namespaces. This is done to debug
@@ -2288,8 +2321,8 @@ static int restore_root_task(struct pstree_item *init)
 	if (prepare_userns_hook())
 		return -1;
 
-	if (prepare_namespace_before_tasks())
-		return -1;
+	// if (prepare_namespace_before_tasks())
+	// 	return -1;
 
 	if (vpid(init) == INIT_PID) {
 		if (!(root_ns_mask & CLONE_NEWPID)) {
@@ -2359,9 +2392,7 @@ static int restore_root_task(struct pstree_item *init)
 	if (ret)
 		goto out_kill;
 
-	timing_start(TIME_RESTORE_RUN_SET_NS_SCRIPT);
 	ret = run_scripts(ACT_SETUP_NS);
-	timing_stop(TIME_RESTORE_RUN_SET_NS_SCRIPT);
 	if (ret)
 		goto out_kill;
 
@@ -2369,24 +2400,24 @@ static int restore_root_task(struct pstree_item *init)
 	if (ret)
 		goto out_kill;
 
-	if (root_ns_mask & CLONE_NEWNS) {
-		mnt_ns_fd = open_proc(init->pid->real, "ns/mnt");
-		if (mnt_ns_fd < 0)
-			goto out_kill;
-	}
+	// if (root_ns_mask & CLONE_NEWNS) {
+	// 	mnt_ns_fd = open_proc(init->pid->real, "ns/mnt");
+	// 	if (mnt_ns_fd < 0)
+	// 		goto out_kill;
+	// }
 
-	if (root_ns_mask & opts.empty_ns & CLONE_NEWNET) {
-		/*
-		 * Local TCP connections were locked by network_lock_internal()
-		 * on dump and normally should have been C/R-ed by respectively
-		 * dump_iptables() and restore_iptables() in net.c. However in
-		 * the '--empty-ns net' mode no iptables C/R is done and we
-		 * need to return these rules by hands.
-		 */
-		ret = network_lock_internal();
-		if (ret)
-			goto out_kill;
-	}
+	// if (root_ns_mask & opts.empty_ns & CLONE_NEWNET) {
+	// 	/*
+	// 	 * Local TCP connections were locked by network_lock_internal()
+	// 	 * on dump and normally should have been C/R-ed by respectively
+	// 	 * dump_iptables() and restore_iptables() in net.c. However in
+	// 	 * the '--empty-ns net' mode no iptables C/R is done and we
+	// 	 * need to return these rules by hands.
+	// 	 */
+	// 	ret = network_lock_internal();
+	// 	if (ret)
+	// 		goto out_kill;
+	// }
 
 	ret = run_scripts(ACT_POST_SETUP_NS);
 	if (ret)
@@ -2418,9 +2449,9 @@ skip_ns_bouncing:
 	if (ret < 0)
 		goto out_kill;
 
-	ret = stop_usernsd();
-	if (ret < 0)
-		goto out_kill;
+	// ret = stop_usernsd();
+	// if (ret < 0)
+	// 	goto out_kill;
 
 	ret = stop_cgroupd();
 	if (ret < 0)
@@ -2449,8 +2480,8 @@ skip_ns_bouncing:
 	 * There is no need to call try_clean_remaps() after this point,
 	 * as restore went OK and all ghosts were removed by the openers.
 	 */
-	if (depopulate_roots_yard(mnt_ns_fd, false))
-		goto out_kill;
+	// if (depopulate_roots_yard(mnt_ns_fd, false))
+	// 	goto out_kill;
 
 	close_safe(&mnt_ns_fd);
 
@@ -2458,7 +2489,7 @@ skip_ns_bouncing:
 		goto out_kill;
 
 	/* Unlock network before disabling repair mode on sockets */
-	network_unlock();
+	// network_unlock();
 
 	/*
 	 * Stop getting sigchld, after we resume the tasks they
@@ -2471,7 +2502,27 @@ skip_ns_bouncing:
 	 * Network is unlocked. If something fails below - we lose data
 	 * or a connection.
 	 */
-	attach_to_tasks(root_seized);
+	// [roughly 9us for hello_world]
+	// if (gettimeofday(&start, NULL)) {
+	// 	pr_err("gettimeofday failed before catch_task\n");
+	// }
+	detach_root_task(root_seized);
+	// if (gettimeofday(&now, NULL)) {
+	// 	pr_err("gettimeofday failed after catch_task\n");
+	// }
+	// interval = timeval_to_us(&now) - timeval_to_us(&start);
+	// pr_debug("METRIC detach_root_task spent %ld us\n", interval);
+
+	// [roughly 8ms for hello_world]
+	// if (gettimeofday(&start, NULL)) {
+	// 	pr_err("gettimeofday failed before catch_task\n");
+	// }
+	// attach_to_tasks(root_seized);
+	// if (gettimeofday(&now, NULL)) {
+	// 	pr_err("gettimeofday failed after catch_task\n");
+	// }
+	// interval = timeval_to_us(&now) - timeval_to_us(&start);
+	// pr_debug("METRIC attach_to_task spent %ld us\n", interval);
 
 	if (restore_switch_stage(CR_STATE_RESTORE_CREDS))
 		goto out_kill_network_unlocked;
@@ -2479,30 +2530,49 @@ skip_ns_bouncing:
 	timing_stop(TIME_RESTORE);
 
 	timing_start(TIME_AFTER_RESTORE);
-	if (catch_tasks(root_seized)) {
-		pr_err("Can't catch all tasks\n");
-		goto out_kill_network_unlocked;
-	}
-	tv = get_timing_start(TIME_AFTER_RESTORE);
-	if (gettimeofday(&now, NULL)) {
-		pr_err("gettimeofday failed after catch_task\n");
-	}
-	interval = timeval_to_us(&now) - timeval_to_us(tv);
-	pr_debug("METRIC catch task spent %ld us", interval);
-
+	// if (catch_tasks(root_seized)) {
+	// 	pr_err("Can't catch all tasks\n");
+	// 	goto out_kill_network_unlocked;
+	// }
+	// tv = get_timing_start(TIME_AFTER_RESTORE);
+	// if (gettimeofday(&now, NULL)) {
+	// 	pr_err("gettimeofday failed after catch_task\n");
+	// }
+	// interval = timeval_to_us(&now) - timeval_to_us(tv);
+	// pr_debug("METRIC catch task spent %ld us", interval);
 
 	if (lazy_pages_finish_restore())
 		goto out_kill_network_unlocked;
 
 	__restore_switch_stage(CR_STATE_COMPLETE);
 
-	ret = compel_stop_on_syscall(task_entries->nr_threads, __NR(rt_sigreturn, 0), __NR(rt_sigreturn, 1));
-	if (ret) {
-		pr_err("Can't stop all tasks on rt_sigreturn\n");
-		goto out_kill_network_unlocked;
-	}
+	// [roughly 7.5ms for hello_world]
+	// if (gettimeofday(&start, NULL)) {
+	// 	pr_err("gettimeofday failed before catch_task\n");
+	// }
+	// ret = compel_stop_on_syscall(task_entries->nr_threads, __NR(rt_sigreturn, 0), __NR(rt_sigreturn, 1));
+	// if (ret) {
+	// 	pr_err("Can't stop all tasks on rt_sigreturn\n");
+	// 	goto out_kill_network_unlocked;
+	// }
+	// if (gettimeofday(&now, NULL)) {
+	// 	pr_err("gettimeofday failed after catch_task\n");
+	// }
+	// interval = timeval_to_us(&now) - timeval_to_us(&start);
+	// pr_debug("METRIC compel_stop_on sigreturn spent %ld us\n", interval);
 
-	finalize_restore();
+	// [roughly 100 us for hello_world]
+	// if (gettimeofday(&start, NULL)) {
+	// 	pr_err("gettimeofday failed before catch_task\n");
+	// }
+	// finalize_restore();
+	// if (gettimeofday(&now, NULL)) {
+	// 	pr_err("gettimeofday failed after catch_task\n");
+	// }
+	// interval = timeval_to_us(&now) - timeval_to_us(&start);
+	// pr_debug("METRIC finalize_restore spent %ld us\n", interval);
+
+	// for switch we do not support plugin
 	/*
 	 * Some external devices such as GPUs might need a very late
 	 * trigger to kick-off some events, memory notifiers and for
@@ -2512,20 +2582,20 @@ skip_ns_bouncing:
 	 * mapped memory) could be done sanely once the pie code hands
 	 * over the control to master process.
 	 */
-	for_each_pstree_item(item) {
-		pr_info("Run late stage hook from criu master for external devices\n");
-		ret = run_plugins(RESUME_DEVICES_LATE, item->pid->real);
-		/*
-		 * This may not really be an error. Only certain plugin hooks
-		 * (if available) will return success such as amdgpu_plugin that
-		 * validates the pid of the resuming tasks in the kernel mode.
-		 * Most of the times, it'll be -ENOTSUP and in few cases, it
-		 * might actually be a true error code but that would be also
-		 * captured in the plugin so no need to print the error here.
-		 */
-		if (ret < 0)
-			pr_debug("restore late stage hook for external plugin failed\n");
-	}
+	// for_each_pstree_item(item) {
+	// 	pr_info("Run late stage hook from criu master for external devices\n");
+	// 	ret = run_plugins(RESUME_DEVICES_LATE, item->pid->real);
+	// 	/*
+	// 	 * This may not really be an error. Only certain plugin hooks
+	// 	 * (if available) will return success such as amdgpu_plugin that
+	// 	 * validates the pid of the resuming tasks in the kernel mode.
+	// 	 * Most of the times, it'll be -ENOTSUP and in few cases, it
+	// 	 * might actually be a true error code but that would be also
+	// 	 * captured in the plugin so no need to print the error here.
+	// 	 */
+	// 	if (ret < 0)
+	// 		pr_debug("restore late stage hook for external plugin failed\n");
+	// }
 
 	ret = run_scripts(ACT_PRE_RESUME);
 	if (ret)
@@ -2538,10 +2608,19 @@ skip_ns_bouncing:
 	if (restore_rseq_cs())
 		pr_err("Unable to restore rseq_cs state\n");
 
-	timing_stop(TIME_AFTER_RESTORE);
 	/* Detaches from processes and they continue run through sigreturn. */
-	if (finalize_restore_detach())
-		goto out_kill_network_unlocked;
+	// [roughly 13us for hello_world]
+	// if (gettimeofday(&start, NULL)) {
+	// 	pr_err("gettimeofday failed before catch_task\n");
+	// }
+	// if (finalize_restore_detach())
+	// 	goto out_kill_network_unlocked;
+	// if (gettimeofday(&now, NULL)) {
+	// 	pr_err("gettimeofday failed after catch_task\n");
+	// }
+	// interval = timeval_to_us(&now) - timeval_to_us(&start);
+	// pr_debug("METRIC finalize_restore_detach spent %ld us\n", interval);
+	timing_stop(TIME_AFTER_RESTORE);
 
 	pr_info("Restore finished successfully. Tasks resumed.\n");
 	print_restore_timing();
@@ -2558,6 +2637,9 @@ skip_ns_bouncing:
 		reap_zombies();
 	}
 
+	if (stash_pop_criu_original_mntns()) {
+		return -1;
+	}
 	return 0;
 
 out_kill_network_unlocked:
@@ -2585,8 +2667,11 @@ out_kill:
 	}
 
 out:
-	depopulate_roots_yard(mnt_ns_fd, true);
-	stop_usernsd();
+	if (stash_pop_criu_original_mntns()) {
+		return -1;
+	}
+	// depopulate_roots_yard(mnt_ns_fd, true);
+	// stop_usernsd();
 	__restore_switch_stage(CR_STATE_FAIL);
 	pr_err("Restoring FAILED.\n");
 	return -1;
@@ -2676,6 +2761,7 @@ int cr_restore_tasks(void)
 	if (crtools_prepare_shared() < 0)
 		goto err;
 
+	// TODO skip prepare cgroup
 	timing_start(TIME_RESTORE_PREPARE_CGROUP);
 	if (prepare_cgroup())
 		goto clean_cgroup;
@@ -2688,6 +2774,7 @@ int cr_restore_tasks(void)
 		goto clean_cgroup;
 
 	ret = restore_root_task(root_item);
+	pr_debug("restore_root_task() return %d\n", ret);
 clean_cgroup:
 	fini_cgroup();
 err:
@@ -3602,6 +3689,7 @@ static void *restorer_munmap_addr(CoreEntry *core, void *restorer_blob)
 	if (core_is_compat(core))
 		return restorer_sym(restorer_blob, arch_export_unmap_compat);
 #endif
+	// this a restorer_blob address + unmap offset (define in auto-generated restorer-blob.h)
 	return restorer_sym(restorer_blob, arch_export_unmap);
 }
 
@@ -3655,8 +3743,8 @@ static int sigreturn_restore(pid_t pid, struct task_restore_args *task_args, uns
 		/* Wait when all tasks restored all files */
 		if (restore_wait_other_tasks())
 			goto err_nv;
-		if (root_ns_mask & CLONE_NEWNS && remount_readonly_mounts())
-			goto err_nv;
+		// if (root_ns_mask & CLONE_NEWNS && remount_readonly_mounts())
+		// 	goto err_nv;
 	}
 
 	/*

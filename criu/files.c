@@ -1,3 +1,4 @@
+#include "log.h"
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -1627,6 +1628,7 @@ int inherit_fd_move_to_fdstore(void)
 	struct inherit_fd *inh;
 
 	list_for_each_entry(inh, &opts.inherit_fds, inh_list) {
+		pr_debug("inherit fd %d key %s\n", inh->inh_fd, inh->inh_id);
 		inh->inh_fd_id = fdstore_add(inh->inh_fd);
 		if (inh->inh_fd_id < 0)
 			return -1;

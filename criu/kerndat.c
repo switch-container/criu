@@ -1079,6 +1079,7 @@ static int kerndat_has_openat2(void)
 
 #define KERNDAT_CACHE_NAME "criu.kdat"
 #define KERNDAT_CACHE_FILE KDAT_RUNDIR "/" KERNDAT_CACHE_NAME
+#define KERNDAT_CACHE_FILE_BACK "/tmp/" KERNDAT_CACHE_NAME
 
 /*
  * Returns:
@@ -1122,14 +1123,8 @@ static int get_kerndat_filename(char **kdat_file)
  * 0 if cache was loaded
  * 1 if cache does not exist or is stale or cache directory undefined in env (non-root mode)
  */
-static int kerndat_try_load_cache(void)
-{
-	cleanup_free char *kdat_file = NULL;
+static int _kerndat_try_load_cache_from(char* kdat_file) {
 	int fd, ret;
-
-	ret = get_kerndat_filename(&kdat_file);
-	if (ret)
-		return ret;
 
 	fd = open(kdat_file, O_RDONLY);
 	if (fd < 0) {
@@ -1159,22 +1154,61 @@ static int kerndat_try_load_cache(void)
 	return 0;
 }
 
-static void kerndat_save_cache(void)
+/*
+ * Returns:
+ * -1 if error
+ * 0 if cache was loaded
+ * 1 if cache does not exist or is stale or cache directory undefined in env (non-root mode)
+ */
+static int kerndat_try_load_cache(void)
 {
+	cleanup_free char *kdat_file = NULL;
+	// int fd, ret;
+	int ret;
+
+	ret = get_kerndat_filename(&kdat_file);
+	if (ret)
+		return ret;
+	ret = _kerndat_try_load_cache_from(kdat_file);
+	if (ret <= 0) {
+		return ret;
+	}
+	return _kerndat_try_load_cache_from(KERNDAT_CACHE_FILE_BACK);
+
+	// fd = open(kdat_file, O_RDONLY);
+	// if (fd < 0) {
+	// 	if (ENOENT == errno)
+	// 		pr_debug("File %s does not exist\n", kdat_file);
+	// 	else
+	// 		pr_warn("Can't load %s\n", kdat_file);
+	// 	return 1;
+	// }
+
+	// ret = read(fd, &kdat, sizeof(kdat));
+	// if (ret < 0) {
+	// 	pr_perror("Can't read kdat cache");
+	// 	close(fd);
+	// 	return -1;
+	// }
+
+	// close(fd);
+
+	// if (ret != sizeof(kdat) || kdat.magic1 != KDAT_MAGIC || kdat.magic2 != KDAT_MAGIC_2) {
+	// 	pr_warn("Stale %s file\n", kdat_file);
+	// 	unlink(kdat_file);
+	// 	return 1;
+	// }
+
+	// pr_info("Loaded kdat cache from %s\n", kdat_file);
+	// return 0;
+}
+
+static int _kerndat_save_cache_to(char* kdat_file) {
 	int fd, ret;
 	struct statfs s;
-	cleanup_free char *kdat_file = NULL;
 	cleanup_free char *kdat_file_tmp = NULL;
 
-	if (get_kerndat_filename(&kdat_file))
-		return;
-
 	ret = asprintf(&kdat_file_tmp, "%s.tmp", kdat_file);
-
-	if (unlikely(ret < 0)) {
-		pr_warn("Cannot allocate memory for kerndat file name\n");
-		return;
-	}
 
 	fd = open(kdat_file_tmp, O_CREAT | O_EXCL | O_WRONLY, 0600);
 	if (fd < 0)
@@ -1183,7 +1217,7 @@ static void kerndat_save_cache(void)
 		 * instance. That's OK, just ignore this error and
 		 * proceed.
 		 */
-		return;
+		return -1;
 
 	/*
 	 * If running as root we store the cache file on a tmpfs (/run),
@@ -1218,6 +1252,76 @@ static void kerndat_save_cache(void)
 	unl:
 		unlink(kdat_file);
 	}
+
+	return ret;
+}
+
+static void kerndat_save_cache(void)
+{
+	// int fd, ret;
+	// struct statfs s;
+	cleanup_free char *kdat_file = NULL;
+	// cleanup_free char *kdat_file_tmp = NULL;
+
+	if (get_kerndat_filename(&kdat_file))
+		return;
+	
+	if (_kerndat_save_cache_to(kdat_file) == 0) {
+		return;
+	}
+
+	_kerndat_save_cache_to(KERNDAT_CACHE_FILE_BACK);
+
+
+	// ret = asprintf(&kdat_file_tmp, "%s.tmp", kdat_file);
+
+	// if (unlikely(ret < 0)) {
+	// 	pr_warn("Cannot allocate memory for kerndat file name\n");
+	// 	return;
+	// }
+
+	// fd = open(kdat_file_tmp, O_CREAT | O_EXCL | O_WRONLY, 0600);
+	// if (fd < 0)
+	// 	/*
+	// 	 * It can happen that we race with some other criu
+	// 	 * instance. That's OK, just ignore this error and
+	// 	 * proceed.
+	// 	 */
+	// 	return;
+
+	// /*
+	//  * If running as root we store the cache file on a tmpfs (/run),
+	//  * because the file should be gone after reboot.
+	//  */
+	// if (fstatfs(fd, &s) < 0 || s.f_type != TMPFS_MAGIC) {
+	// 	pr_warn("Can't keep kdat cache on non-tempfs\n");
+	// 	close(fd);
+	// 	goto unl;
+	// }
+
+	// /*
+	//  * One magic to make sure we're reading the kdat file.
+	//  * One more magic to make somehow sure we don't read kdat
+	//  * from some other criu
+	//  */
+	// kdat.magic1 = KDAT_MAGIC;
+	// kdat.magic2 = KDAT_MAGIC_2;
+
+	// ret = write(fd, &kdat, sizeof(kdat));
+	// close(fd);
+
+	// if (ret == sizeof(kdat))
+	// 	ret = rename(kdat_file_tmp, kdat_file);
+	// else {
+	// 	ret = -1;
+	// 	errno = EIO;
+	// }
+
+	// if (ret < 0) {
+	// 	pr_perror("Couldn't save %s", kdat_file);
+	// unl:
+	// 	unlink(kdat_file);
+	// }
 }
 
 static int kerndat_uffd(void)
