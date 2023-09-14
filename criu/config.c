@@ -703,6 +703,7 @@ int parse_options(int argc, char **argv, bool *usage_error, bool *has_exec_cmd, 
 		BOOL_OPT("mntns-compat-mode", &opts.mntns_compat_mode),
 		BOOL_OPT("unprivileged", &opts.unprivileged),
 		BOOL_OPT("ghost-fiemap", &opts.ghost_fiemap),
+		{ "dax-device", required_argument, 0, 1234 },
 		{},
 	};
 
@@ -1049,6 +1050,9 @@ int parse_options(int argc, char **argv, bool *usage_error, bool *has_exec_cmd, 
 		case 'h':
 			*usage_error = false;
 			return 2;
+		case 1234:
+			SET_CHAR_OPTS(dax_device, optarg);
+			break;
 		default:
 			return 2;
 		}
@@ -1143,7 +1147,7 @@ static void print_external(void)
 	struct external *ext;
 	char output[4096];
 	int length = 0;
-	length += sprintf(output,"external: ");
+	length += sprintf(output, "external: ");
 	list_for_each_entry(ext, &opts.external, node) {
 		length += sprintf(output + length, "%s ", ext->id);
 	}
@@ -1168,7 +1172,7 @@ static void print_new_cgroup_roots(void)
 	char output[4096];
 	int length = 0;
 	length += sprintf(output, "new cgroup roots: ");
-	list_for_each_entry(o, &opts.new_cgroup_roots, node)  {
+	list_for_each_entry(o, &opts.new_cgroup_roots, node) {
 		length += sprintf(output + length, "[%s %s] ", o->controller, o->newroot);
 	}
 	pr_info("%s\n", output);
@@ -1176,8 +1180,8 @@ static void print_new_cgroup_roots(void)
 
 void print_opts(void)
 {
-	#undef LOG_PREFIX
-	#define LOG_PREFIX "opt -"
+#undef LOG_PREFIX
+#define LOG_PREFIX "opt -"
 	show_int_field(final_state);
 	show_int_field(restore_sibling);
 	show_int_field(ext_unix_sk);
@@ -1216,5 +1220,5 @@ void print_opts(void)
 	show_str_field(imgs_dir);
 	show_int_field(mode);
 	show_str_field(argv_0);
-	#undef LOG_PREFIX
+#undef LOG_PREFIX
 }

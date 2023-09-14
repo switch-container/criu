@@ -4,6 +4,7 @@
 #include "common/list.h"
 #include "images/pagemap.pb-c.h"
 #include "page.h"
+#include "cr-convert.h"
 
 /*
  * page_read -- engine, that reads pages from image file(s)
@@ -99,6 +100,7 @@ struct page_read {
  */
 extern int open_page_read(unsigned long id, struct page_read *, int pr_flags);
 extern int open_page_read_at(int dfd, unsigned long id, struct page_read *pr, int pr_flags);
+extern int open_convert_ctl(unsigned long img_id, struct convert_ctl *cc);
 
 struct task_restore_args;
 

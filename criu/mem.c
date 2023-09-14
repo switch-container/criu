@@ -1,3 +1,4 @@
+#include "util.h"
 #include <unistd.h>
 #include <stdio.h>
 #include <sys/mman.h>
@@ -5,6 +6,7 @@
 #include <fcntl.h>
 #include <sys/syscall.h>
 #include <sys/prctl.h>
+#include <pseudo_mm.h>
 
 #include "types.h"
 #include "cr_options.h"
@@ -1443,4 +1445,320 @@ int prepare_vmas(struct pstree_item *t, struct task_restore_args *ta)
 	}
 
 	return prepare_vma_ios(t, ta);
+}
+
+/*
+ * The following part is add for cr-convert,
+ * which is used to help building pseudo_mm from the image files
+ * generated in dump phase.
+ */
+// For now we only support limited types of memory mappings
+static int validate_vma_for_convert(struct vma_area *vma)
+{
+	VmaEntry *e = vma->e;
+	const uint32_t invalid_status = VMA_AREA_MEMFD | VMA_AREA_AIORING | VMA_ANON_SHARED | VMA_AREA_SYSVIPC |
+					VMA_AREA_SOCKET | VMA_EXT_PLUGIN | VMA_UNSUPP;
+	if (e->status & invalid_status) {
+		pr_err("Found unsupported vma for convert (%#lx - %#lx) status %#x\n", e->start, e->end, e->status);
+		return -1;
+	}
+	// TODO(huang-jl) this may have some undefined behavior
+	if ((e->flags & MAP_SHARED) && (e->prot & PROT_WRITE)) {
+		pr_warn("Found writtable SHARED mapping (%#lx - %#lx)\n", e->start, e->end);
+	}
+	return 0;
+}
+
+static inline bool skip_vma_when_build_pseudo_mm(struct vma_area *vma)
+{
+	VmaEntry *e = vma->e;
+	const uint32_t skip_status = VMA_AREA_VDSO | VMA_AREA_VVAR | VMA_AREA_VSYSCALL;
+	// if non-regular, then we need skip
+	if (!vma_area_is(vma, VMA_AREA_REGULAR))
+		return true;
+	// if meet skip_status, then we need skip
+	if (e->status & skip_status)
+		return true;
+	return false;
+}
+
+static inline int skip_vma_when_setup_pt(struct vma_area *vma)
+{
+	const uint32_t skip_status = VMA_AREA_VDSO;
+	if (vma->e->status & skip_status)
+		return true;
+	return false;
+}
+
+/*
+ * parse the mm.img for `i` and restore the vma list.
+ */
+int prepare_mm_for_convert(struct pstree_item *i)
+{
+	pid_t pid = vpid(i);
+	int ret = -1, vn = 0;
+	struct cr_img *img;
+	struct rst_info *ri = rsti(i);
+
+	img = open_image(CR_FD_MM, O_RSTR, pid);
+	if (!img)
+		return -1;
+
+	ret = pb_read_one_eof(img, &ri->mm, PB_MM);
+	close_image(img);
+	if (ret <= 0)
+		return ret;
+
+	pr_debug("Found %zd VMAs in image\n", ri->mm->n_vmas);
+	img = NULL;
+	if (ri->mm->n_vmas == 0) {
+		/*
+		 * Old image. Read VMAs from vma-.img
+		 */
+		img = open_image(CR_FD_VMAS, O_RSTR, pid);
+		if (!img)
+			return -1;
+	}
+
+	while (vn < ri->mm->n_vmas || img != NULL) {
+		struct vma_area *vma;
+
+		ret = -1;
+		vma = alloc_vma_area();
+		if (!vma)
+			break;
+
+		ri->vmas.nr++;
+		if (!img)
+			vma->e = ri->mm->vmas[vn++];
+		else {
+			ret = pb_read_one_eof(img, &vma->e, PB_VMA);
+			if (ret <= 0) {
+				xfree(vma);
+				close_image(img);
+				img = NULL;
+				break;
+			}
+		}
+		list_add_tail(&vma->list, &ri->vmas.h);
+
+		pr_info("vma 0x%" PRIx64 " 0x%" PRIx64 "\n", vma->e->start, vma->e->end);
+		if (validate_vma_for_convert(vma))
+			ret = -1;
+		else if (vma_area_is(vma, VMA_FILE_PRIVATE) || vma_area_is(vma, VMA_FILE_SHARED))
+			ret = collect_filemap(vma);
+		else
+			ret = 0;
+		if (ret)
+			break;
+	}
+
+	if (img)
+		close_image(img);
+	return ret;
+}
+
+int premap_priv_vmas_for_convert(struct pstree_item *t, struct page_read *pr)
+{
+	struct vma_area *vma;
+	struct vm_area_list *vmas = &rsti(t)->vmas;
+	unsigned long pstart = 0;
+	int ret = 0;
+	LIST_HEAD(empty);
+
+	filemap_ctx_init(true);
+
+	list_for_each_entry(vma, &vmas->h, list) {
+		if (task_size_check(vpid(t), vma->e)) {
+			ret = -1;
+			break;
+		}
+		if (pstart > vma->e->start) {
+			ret = -1;
+			pr_err("VMA-s are not sorted in the image file\n");
+			break;
+		}
+		pstart = vma->e->start;
+
+		if (!vma_area_is_private(vma, kdat.task_size))
+			continue;
+
+		if (vma->e->flags & MAP_HUGETLB)
+			continue;
+
+		/* VMA offset may change due to plugin so we cannot premap */
+		if (vma->e->status & VMA_EXT_PLUGIN)
+			continue;
+
+		if (vma->pvma == NULL && pr->pieok && !vma_force_premap(vma, &vmas->h)) {
+			/*
+			 * VMA in question is not shared with anyone. We'll
+			 * restore it with its contents in restorer.
+			 * Now let's check whether we need to map it with
+			 * PROT_WRITE or not.
+			 */
+			do {
+				if (pr->pe->vaddr + pr->pe->nr_pages * PAGE_SIZE <= vma->e->start)
+					continue;
+				if (pr->pe->vaddr > vma->e->end)
+					vma->e->status |= VMA_NO_PROT_WRITE;
+				break;
+			} while (pr->advance(pr));
+
+			continue;
+		}
+
+		pr_err("Do not support premap area for now!");
+		ret = -1;
+		break;
+	}
+
+	filemap_ctx_fini();
+
+	return ret;
+}
+
+static int vma_setup_pt_for_convert(struct pstree_item *t, struct convert_ctl *cc);
+
+// Fill a pseudo_mm for pstree_item `i`.
+// NOTE: This method will also setup page table entry.
+int build_pseudo_mm_for_convert(struct pstree_item *t, struct convert_ctl *cc)
+{
+	struct vma_area *vma;
+	int ret = 0;
+	struct vm_area_list *vmas = &rsti(t)->vmas;
+
+	list_for_each_entry(vma, &vmas->h, list) {
+		VmaEntry *e = vma->e;
+		size_t len = e->end - e->start;
+		if (skip_vma_when_build_pseudo_mm(vma)) {
+			pr_vma_with_prefix("build_pseudo_mm skip vma: ", vma);
+			continue;
+		}
+		if (vma->vm_open && vma->vm_open(vpid(t), vma)) {
+			pr_err("Cannot open vma\n");
+			ret = -1;
+			break;
+		}
+		ret = pseudo_mm_add_map(cc->pseudo_mm_id, decode_pointer(e->start), len, e->prot, e->flags, e->fd,
+					e->pgoff);
+		if (ret) {
+			pr_err("pseudo_mm_add_map(%d, %#lx, %#lx, %#x, %#x, %ld, %#lx) failed\n", cc->pseudo_mm_id,
+			       e->start, len, e->prot, e->flags, e->fd, e->pgoff);
+			break;
+		}
+		pr_debug("add %s mapping %#lx - %#lx to pseudo_mm %d\n", (e->fd >= 0) ? "file-backed" : "anonymous",
+			 e->start, e->end, cc->pseudo_mm_id);
+	}
+
+	if (ret)
+		return ret;
+	return vma_setup_pt_for_convert(t, cc);
+}
+
+static int vma_setup_pt_for_convert(struct pstree_item *t, struct convert_ctl *cc)
+{
+	struct vma_area *vma;
+	int ret = 0;
+	struct list_head *vmas = &rsti(t)->vmas.h;
+
+	unsigned long va;
+
+	vma = list_first_entry(vmas, struct vma_area, list);
+	// rsti(t)->pages_img_id = cc->pages_img_id;
+
+	/*
+	 * Read page contents.
+	 */
+	while (1) {
+		unsigned long i, nr_pages;
+
+		ret = cc->advance(cc);
+		if (ret <= 0)
+			break;
+
+		va = (unsigned long)decode_pointer(cc->pe->vaddr);
+		nr_pages = cc->pe->nr_pages;
+
+		/*
+		 * This means that userfaultfd is used to load the pages
+		 * on demand.
+		 */
+		if (opts.lazy_pages && pagemap_lazy(cc->pe)) {
+			pr_err("Do not support lazy_pages for now!\n");
+			ret = -1;
+			break;
+		}
+
+		for (i = 0; i < nr_pages; i++) {
+			unsigned long len;
+			/*
+			 * The lookup is over *all* possible VMAs
+			 * read from image file.
+			 */
+			while (va >= vma->e->end) {
+				if (vma->list.next == vmas)
+					goto err_addr;
+				vma = vma_next(vma);
+			}
+
+			/*
+			 * Make sure the page address is inside existing VMA
+			 * and the VMA it refers to still private one, since
+			 * there is no guarantee that the data from pagemap is
+			 * valid.
+			 */
+			if (va < vma->e->start)
+				goto err_addr;
+			else if (unlikely(!vma_area_is_private(vma, kdat.task_size))) {
+				pr_err("Trying to restore page for non-private VMA\n");
+				goto err_addr;
+			}
+			// make sure that len will not exceed the vma
+			len = min_t(unsigned long, (nr_pages - i) * PAGE_SIZE, vma->e->end - va);
+			// make sure that len is PAGE_SIZE aligned
+			BUG_ON(len & (PAGE_SIZE - 1));
+
+			if (vma->e->status & VMA_NO_PROT_WRITE) {
+				pr_debug("VMA 0x%" PRIx64 ":0x%" PRIx64 " RO %#lx:%lu IO\n", vma->e->start, vma->e->end,
+					 va, nr_pages);
+				BUG();
+			}
+
+			BUG_ON(vma_area_is(vma, VMA_PREMMAPED));
+			if (!skip_vma_when_setup_pt(vma)) {
+				// TODO(huang-jl) set the pgoff in dax from convert control block
+				ret = pseudo_mm_setup_pt(cc->pseudo_mm_id, (void *)va, len, cc->dax_pgoff);
+				if (ret) {
+					pr_perror("setup page table of (%#lx - %#lx) to pgoff %#lx failed", va,
+						  va + len, cc->dax_pgoff);
+					ret = -1;
+					goto out;
+				}
+				pr_debug("setup page table of (%#lx - %#lx) to pgoff %#lx\n", va, va + len,
+					 cc->dax_pgoff);
+			} else {
+				char prefix[256];
+				sprintf(prefix, "setup_pt skip vma for pagemap (%#lx - %#lx): ", cc->pe->vaddr,
+					cc->pe->vaddr + len);
+				pr_vma_with_prefix(prefix, vma);
+			}
+
+			cc->skip_pages(cc, len);
+			va += len;
+			len >>= PAGE_SHIFT;
+			i += len - 1;
+		}
+	}
+
+out:
+	cc->close(cc);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+
+err_addr:
+	pr_err("Page entry address %lx outside of VMA %lx-%lx\n", va, (long)vma->e->start, (long)vma->e->end);
+	return -1;
 }

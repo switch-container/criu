@@ -46,6 +46,7 @@
 
 #include "setproctitle.h"
 #include "sysctl.h"
+#include "cr-convert.h"
 
 void flush_early_log_to_stderr(void) __attribute__((destructor));
 
@@ -102,6 +103,8 @@ static int parse_criu_mode(char *mode)
 		opts.mode = CR_EXEC_DEPRECATED;
 	else if (!strcmp(mode, "show"))
 		opts.mode = CR_SHOW_DEPRECATED;
+	else if (!strcmp(mode, "convert"))
+		opts.mode = CR_CONVERT;
 	else
 		return -1;
 
@@ -234,7 +237,7 @@ int main(int argc, char *argv[], char *envp[])
 	}
 
 	/* We must not open imgs dir, if service is called */
-	if (opts.mode != CR_SERVICE) {
+	if (opts.mode != CR_SERVICE && opts.mode != CR_CONVERT) {
 		ret = open_image_dir(opts.imgs_dir, image_dir_mode(argv, optind));
 		if (ret < 0) {
 			pr_err("Couldn't open image dir %s\n", opts.imgs_dir);
@@ -353,6 +356,9 @@ int main(int argc, char *argv[], char *envp[])
 		return -1;
 	}
 
+	if (opts.mode == CR_CONVERT)
+		return cr_convert();
+
 	pr_err("unknown command: %s\n", argv[optind]);
 usage:
 	pr_msg("\n"
@@ -374,7 +380,8 @@ usage:
 	       "  service        launch service\n"
 	       "  dedup          remove duplicates in memory dump\n"
 	       "  cpuinfo dump   writes cpu information into image file\n"
-	       "  cpuinfo check  validates cpu information read from image file\n");
+	       "  cpuinfo check  validates cpu information read from image file\n"
+	       "  convert        convert an existing img to use pseudo_mm API\n");
 
 	if (usage_error) {
 		pr_msg("\nTry -h|--help for more info\n");
@@ -566,6 +573,7 @@ usage:
 	       "\n"
 	       "Other options:\n"
 	       "  -h|--help             show this text\n"
+	       "  --dax-device PATH     set the dax device used for Command convert\n"
 	       "  -V|--version          show version\n");
 
 	return 0;

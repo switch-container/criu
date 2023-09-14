@@ -1669,6 +1669,7 @@ long __export_restore_task(struct task_restore_args *args)
 
 	/*
 	 * OK, lets try to map new one.
+	 * TODO(huang-jl) replace this with pseudo_mm_attach
 	 */
 	for (i = 0; i < args->vmas_n; i++) {
 		vma_entry = args->vmas + i;
@@ -1708,6 +1709,7 @@ long __export_restore_task(struct task_restore_args *args)
 			pr_debug("`- returned %ld\n", (long)r);
 			/* If the file is open for writing, then it means we should punch holes
 			 * in it. */
+			// default auto_dedup is 0 (in containerd & runc)
 			if (r > 0 && args->auto_dedup) {
 				int fr = sys_fallocate(args->vma_ios_fd, FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE,
 						       rio->off, r);

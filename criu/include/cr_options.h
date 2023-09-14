@@ -119,6 +119,7 @@ enum criu_mode {
 	CR_CPUINFO,
 	CR_EXEC_DEPRECATED,
 	CR_SHOW_DEPRECATED,
+	CR_CONVERT,
 };
 
 struct cr_options {
@@ -239,6 +240,10 @@ struct cr_options {
 
 	// if CRIU is restore to an existing namespace
 	bool switch_;
+	/*
+	 * Path to the dax device (e.g., /dev/dax0.0)
+	 */
+	char *dax_device;
 };
 
 extern struct cr_options opts;

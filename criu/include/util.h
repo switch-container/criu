@@ -40,6 +40,7 @@ struct list_head;
 extern int service_fd_rlim_cur;
 
 extern void pr_vma(const struct vma_area *vma_area);
+extern void pr_vma_with_prefix(const char *prefix, const struct vma_area *vma_area);
 
 #define pr_info_vma(vma_area) pr_vma(vma_area)
 
@@ -409,7 +410,7 @@ extern void util_init(void);
 
 extern char *resolve_mountpoint(char *path);
 
-extern int show_dir(char* path);
+extern int show_dir(char *path);
 
 // return a timeval as a represent of start
 extern struct timeval start_metric(void);

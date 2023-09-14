@@ -912,6 +912,7 @@ static int restore_one_alive_task(int pid, CoreEntry *core)
 		return -1;
 
 	// [CR-MEM]
+	// TODO(huang-jl) remove this ?
 	if (open_vmas(current))
 		return -1;
 
@@ -972,6 +973,7 @@ static int restore_one_alive_task(int pid, CoreEntry *core)
 		return -1;
 
 	// [CR-MEM] copy vma_iovec and vma_entry and set the image fd
+	// TODO(huang-jl) remove this
 	if (prepare_vmas(current, ta))
 		return -1;
 
@@ -1445,8 +1447,8 @@ static inline int fork_with_pid(struct pstree_item *item)
 	ca.item = item;
 	ca.clone_flags = rsti(item)->clone_flags;
 
- 	// we do not need clone new namespace which already switch in
-	for(i = 0; i < MAX_SWITCH_NS; i++) {
+	// we do not need clone new namespace which already switch in
+	for (i = 0; i < MAX_SWITCH_NS; i++) {
 		ca.clone_flags &= ~switch_namespace[i].clone_flag;
 	}
 	// ca.clone_flags &= ~(CLONE_NEWNS | CLONE_NEWUTS);
@@ -1788,8 +1790,8 @@ static int restore_task_with_children(void *_arg)
 	struct cr_clone_arg *ca = _arg;
 	pid_t pid;
 	int ret;
-	struct timeval start, end;
-	long interval;
+	// struct timeval start, end;
+	// long interval;
 
 	current = ca->item;
 
@@ -1840,7 +1842,10 @@ static int restore_task_with_children(void *_arg)
 		// 	}
 		// }
 
-		// TODO (huang-jl) TIMENS ?
+		// (By huang-jl) recreate time ns cannot be skip:
+		// from linux manual about time namespace we can see
+		// after the first process created in time ns
+		// the timens_offset file cannot be changed
 		if (root_ns_mask & CLONE_NEWTIME) {
 			if (prepare_timens(current->ids->time_ns_id))
 				goto err;
@@ -1869,12 +1874,12 @@ static int restore_task_with_children(void *_arg)
 	 */
 
 	// TODO (huang-jl) do not need preapre cgroup
-	gettimeofday(&start, NULL);
-	if (prepare_task_cgroup(current) < 0)
-		goto err;
-	gettimeofday(&end, NULL);
-	interval = timeval_to_us(&end) - timeval_to_us(&start);
-	pr_debug("METRIC [pid:%d] prepare task cgroup spent %ld us\n", pid, interval);
+	// gettimeofday(&start, NULL);
+	// if (prepare_task_cgroup(current) < 0)
+	// 	goto err;
+	// gettimeofday(&end, NULL);
+	// interval = timeval_to_us(&end) - timeval_to_us(&start);
+	// pr_debug("METRIC [pid:%d] prepare task cgroup spent %ld us\n", pid, interval);
 
 	/* Restore root task */
 	if (current->parent == NULL) {
@@ -1928,6 +1933,7 @@ static int restore_task_with_children(void *_arg)
 	// if (restore_task_mnt_ns(current))
 	// 	goto err;
 
+	// TODO(huang-jl) remove this prepare_mappings
 	if (prepare_mappings(current))
 		goto err;
 
@@ -2101,8 +2107,7 @@ static int restore_rseq_cs(void)
 	return 0;
 }
 
-__attribute__((unused))
-static int catch_tasks(bool root_seized)
+__attribute__((unused)) static int catch_tasks(bool root_seized)
 {
 	struct pstree_item *item;
 
@@ -2141,8 +2146,7 @@ static int catch_tasks(bool root_seized)
 	return 0;
 }
 
-__attribute__((unused))
-static void finalize_restore(void)
+__attribute__((unused)) static void finalize_restore(void)
 {
 	struct pstree_item *item;
 
@@ -2176,8 +2180,7 @@ static void finalize_restore(void)
 	}
 }
 
-__attribute__((unused))
-static int finalize_restore_detach(void)
+__attribute__((unused)) static int finalize_restore_detach(void)
 {
 	struct pstree_item *item;
 

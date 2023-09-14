@@ -162,7 +162,7 @@ static int seek_pagemap(struct page_read *pr, unsigned long vaddr)
 
 		if (end <= vaddr)
 			skip_pagemap_pages(pr, end - pr->cvaddr);
-	adv:; /* otherwise "label at end of compound stmt" gcc error */
+adv:; /* otherwise "label at end of compound stmt" gcc error */
 	} while (advance(pr));
 
 	return 0;
@@ -539,7 +539,7 @@ static int process_async_reads(struct page_read *pr)
 
 		pr_debug("Read piov iovs %d, from %ju, len %ju, first %p:%zu\n", piov->nr, piov->from,
 			 piov->end - piov->from, piov->to->iov_base, piov->to->iov_len);
-	more:
+more:
 		ret = preadv(fd, piov->to, piov->nr, piov->from);
 		if (fault_injected(FI_PARTIAL_PAGES)) {
 			/*
@@ -860,4 +860,152 @@ void dup_page_read(struct page_read *src, struct page_read *dst)
 	INIT_LIST_HEAD(&dst->async);
 	dst->id = src->id + DUP_IDS_BASE * dup_ids++;
 	dst->reset(dst);
+}
+
+/*
+ * The following part is add for cr-convert,
+ * which is used to help building pseudo_mm from the image files
+ * generated in dump phase.
+ *
+ * The main logic imitates from struct page_read.
+ */
+
+static void free_pagemaps_for_convert(struct convert_ctl *cc)
+{
+	int i;
+
+	for (i = 0; i < cc->nr_pmes; i++)
+		pagemap_entry__free_unpacked(cc->pmes[i], NULL);
+
+	xfree(cc->pmes);
+	cc->pmes = NULL;
+}
+
+static void close_convert_ctl(struct convert_ctl *cc)
+{
+	if (cc->pmi)
+		close_image(cc->pmi);
+
+	if (cc->pmes)
+		free_pagemaps_for_convert(cc);
+}
+
+static int init_pagemaps_for_convert(struct convert_ctl *cc)
+{
+	off_t fsize;
+	int nr_pmes, nr_realloc;
+
+	fsize = img_raw_size(cc->pmi);
+
+	if (fsize < 0)
+		return -1;
+
+	nr_pmes = fsize / PAGEMAP_ENTRY_SIZE_ESTIMATE + 1;
+	nr_realloc = nr_pmes / 2;
+
+	cc->pmes = xzalloc(nr_pmes * sizeof(*cc->pmes));
+	if (!cc->pmes)
+		return -1;
+
+	cc->nr_pmes = 0;
+	cc->curr_pme = -1;
+
+	while (1) {
+		int ret = pb_read_one_eof(cc->pmi, &cc->pmes[cc->nr_pmes], PB_PAGEMAP);
+		if (ret < 0)
+			goto free_pagemaps;
+		if (ret == 0)
+			break;
+
+		init_compat_pagemap_entry(cc->pmes[cc->nr_pmes]);
+
+		cc->nr_pmes++;
+		if (cc->nr_pmes >= nr_pmes) {
+			PagemapEntry **new;
+			nr_pmes += nr_realloc;
+			new = xrealloc(cc->pmes, nr_pmes * sizeof(*cc->pmes));
+			if (!new)
+				goto free_pagemaps;
+			cc->pmes = new;
+		}
+	}
+
+	close_image(cc->pmi);
+	cc->pmi = NULL;
+
+	return 0;
+
+free_pagemaps:
+	free_pagemaps_for_convert(cc);
+	return -1;
+}
+
+static int convert_ctl_advance(struct convert_ctl *cc)
+{
+	cc->curr_pme++;
+	if (cc->curr_pme >= cc->nr_pmes)
+		return 0;
+
+	cc->pe = cc->pmes[cc->curr_pme];
+
+	return 1;
+}
+
+static void convert_ctl_skip_page(struct convert_ctl *cc, unsigned long len)
+{
+	if (!len)
+		return;
+
+	if (pagemap_present(cc->pe)) {
+		cc->dax_pgoff += (len >> PAGE_SHIFT);
+	}
+}
+
+// NOTE: Return 1 when succeed, <=0 for error.
+// And it is supposed to open one convert_ctl for each item.
+//
+// Imitate `open_page_read_at()`.
+int open_convert_ctl(unsigned long img_id, struct convert_ctl *cc)
+{
+	int pfd;
+	cc->pe = NULL;
+	cc->pmes = NULL;
+
+	cc->pmi = open_image(CR_FD_PAGEMAP, O_RSTR, img_id);
+	if (!cc->pmi)
+		return -1;
+
+	if (empty_image(cc->pmi)) {
+		close_image(cc->pmi);
+		return 0;
+	}
+
+	if (open_parent(get_service_fd(IMG_FD_OFF), &pfd)) {
+		close_image(cc->pmi);
+		return -1;
+	}
+	if (pfd >= 0) {
+		pr_err("Do not support parent image for now!\n");
+		return -1;
+	}
+
+	cc->pi = open_pages_image(O_RSTR, cc->pmi, &cc->pages_img_id);
+	if (!cc->pi) {
+		close_convert_ctl(cc);
+		return -1;
+	}
+
+	if (init_pagemaps_for_convert(cc)) {
+		close_convert_ctl(cc);
+		return -1;
+	}
+
+	cc->advance = convert_ctl_advance;
+	cc->close = close_convert_ctl;
+	cc->skip_pages = convert_ctl_skip_page;
+	cc->img_id = img_id;
+
+	pr_debug("Open convert_ctl with pagemap img_id %ld succeed\n", img_id);
+
+	return 1;
 }

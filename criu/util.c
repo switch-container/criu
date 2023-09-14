@@ -215,6 +215,22 @@ void pr_vma(const struct vma_area *vma_area)
 		vma_area->e->shmid);
 }
 
+void pr_vma_with_prefix(const char *prefix, const struct vma_area *vma_area)
+{
+	char opt[VMA_OPT_LEN];
+	memset(opt, 0, VMA_OPT_LEN);
+
+	if (!vma_area)
+		return;
+
+	vma_opt_str(vma_area, opt);
+	pr_info("%s%#" PRIx64 "-%#" PRIx64 " (%" PRIi64 "K) prot %#x flags %#x fdflags %#o st %#x off %#" PRIx64 " "
+		"%s shmid: %#" PRIx64 "\n",
+		prefix, vma_area->e->start, vma_area->e->end, KBYTES(vma_area_len(vma_area)), vma_area->e->prot,
+		vma_area->e->flags, vma_area->e->fdflags, vma_area->e->status, vma_area->e->pgoff, opt,
+		vma_area->e->shmid);
+}
+
 int close_safe(int *fd)
 {
 	int ret = 0;
@@ -640,7 +656,7 @@ out_chld:
 
 		if (WIFEXITED(status)) {
 			if (!(flags & CRS_CAN_FAIL) && WEXITSTATUS(status))
-				pr_err("exited, status=%d\n", WEXITSTATUS(status));
+				pr_err("%s exited, status=%d\n", cmd, WEXITSTATUS(status));
 			break;
 		} else if (WIFSIGNALED(status)) {
 			pr_err("killed by signal %d: %s\n", WTERMSIG(status), strsignal(WTERMSIG(status)));
@@ -1602,10 +1618,10 @@ char *get_legacy_iptables_bin(bool ipv6, bool restore)
 	 * 1  - present.
 	 */
 	static int iptables_present[2][2] = { { 0, 0 }, { 0, 0 } };
-	char bins[2][2][2][32] = { { { "iptables-save", "iptables-legacy-save" },
-				     { "iptables-restore", "iptables-legacy-restore" } },
-				   { { "ip6tables-save", "ip6tables-legacy-save" },
-				     { "ip6tables-restore", "ip6tables-legacy-restore" } } };
+	char bins[2][2][2][32] = {
+		{ { "iptables-save", "iptables-legacy-save" }, { "iptables-restore", "iptables-legacy-restore" } },
+		{ { "ip6tables-save", "ip6tables-legacy-save" }, { "ip6tables-restore", "ip6tables-legacy-restore" } }
+	};
 	int ret;
 
 	if (iptables_present[ipv6][restore] == -1)
@@ -2131,7 +2147,8 @@ struct timeval start_metric(void)
 	return start;
 }
 // return interval start from tv
-long fini_metric(struct timeval tv) {
+long fini_metric(struct timeval tv)
+{
 	struct timeval now;
 	long us_now, us_tv;
 	if (gettimeofday(&now, NULL)) {
@@ -2139,6 +2156,6 @@ long fini_metric(struct timeval tv) {
 	}
 	us_now = now.tv_sec * USEC_PER_SEC + now.tv_usec;
 	us_tv = tv.tv_sec * USEC_PER_SEC + tv.tv_usec;
-	
+
 	return us_now - us_tv;
 }

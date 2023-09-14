@@ -7,6 +7,7 @@
 #include "pid.h"
 #include "proc_parse.h"
 #include "inventory.pb-c.h"
+#include "cr-convert.h"
 
 struct parasite_ctl;
 struct vm_area_list;
@@ -48,4 +49,7 @@ int prepare_vmas(struct pstree_item *t, struct task_restore_args *ta);
 int unmap_guard_pages(struct pstree_item *t);
 int prepare_mappings(struct pstree_item *t);
 bool should_dump_page(VmaEntry *vmae, u64 pme);
+
+int prepare_mm_for_convert(struct pstree_item *i);
+int build_pseudo_mm_for_convert(struct pstree_item *t, struct convert_ctl *cc);
 #endif /* __CR_MEM_H__ */

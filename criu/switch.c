@@ -52,12 +52,12 @@ int prepare_mnt_ns_for_switch(void)
 			continue;
 		}
 		num++;
-		nsid->mnt.nsfd_id = mntns_fd;
+		nsid->mnt.nsfd_id = fdstore_add(mntns_fd);
 		nsid->mnt.root_fd_id = fdstore_add(root_fd);
 	}
 
 	if (num > 1) {
-		pr_err("switch only support on mnt namespace find %d", num);
+		pr_err("switch only support one mnt namespace find %d", num);
 		return -1;
 	}
 
@@ -99,8 +99,6 @@ int join_switch_namespace(void)
 			continue;
 		}
 
-		if (i == SWITCH_NS_MNT) {
-		}
 		res = setns(target_ns_fd, switch_namespace[i].clone_flag);
 		if (res != 0) {
 			pr_err("fail to switch to namespace id = %s", id);
