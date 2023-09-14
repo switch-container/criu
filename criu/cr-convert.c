@@ -8,7 +8,6 @@
 #include <sys/mman.h>
 #include <errno.h>
 #include <sys/syscall.h>
-#include <pseudo_mm.h>
 #include <dirent.h>
 #include <sys/stat.h>
 
@@ -22,6 +21,8 @@
 #include "cr-convert.h"
 #include "pagemap.h"
 #include "crtools.h"
+#include "restorer.h"
+#include "pseudo_mm.h"
 
 #include "protobuf.h"
 #include "image-desc.h"
@@ -57,6 +58,11 @@ static int mmap_pages_img(struct convert_ctl *cc)
 	ret = read_img_buf(cc->pi, addr, img_size);
 	if (ret < 0)
 		return -1;
+	ret = munmap(addr, img_size);
+	if (ret) {
+		pr_perror("unmap dax device area failed");
+		return -1;
+	}
 	pr_debug("map pages-%d.img to dax device off %#lx\n", cc->pages_img_id, cc->dax_pgoff << PAGE_SHIFT);
 	return 0;
 }
@@ -76,6 +82,31 @@ static int generate_pseudo_mm_img(const char *path, struct convert_ctl *cc)
 	fprintf(pseudo_mm_file, "%d", cc->pseudo_mm_id);
 	fclose(pseudo_mm_file);
 
+	return 0;
+}
+
+int prepare_pseudo_mm_id(int vpid, struct task_restore_args *ta)
+{
+	char path_buf[PATH_MAX];
+	FILE *pseudo_mm_file;
+	int img_dir = get_service_fd(IMG_FD_OFF);
+	int pseudo_mm_id;
+
+	sprintf(path_buf, PSEUDO_MM_ID_FILE_TEMPLATE, (unsigned long)vpid);
+	pseudo_mm_file = fopenat(img_dir, path_buf, "r");
+	if (!pseudo_mm_file) {
+		pr_err("Cannot open %s\n", path_buf);
+		return -1;
+	}
+	if (fscanf(pseudo_mm_file, "%d", &pseudo_mm_id) < 0) {
+		pr_perror("invalid pseudo_mm_file");
+		return -1;
+	}
+	fclose(pseudo_mm_file);
+	if (pseudo_mm_id <= 0) {
+		return -1;
+	}
+	ta->pseudo_mm_id = pseudo_mm_id;
 	return 0;
 }
 
@@ -180,6 +211,10 @@ int convert_one_ctr(const char *path, struct convert_ctl *cc)
 	return 0;
 }
 
+/*
+ * For simplicity, do not consider any cleanup for now.
+ * (e.g., file descriptor and pstree item...)
+ */
 int cr_convert(void)
 {
 	int ret, dax_dev_fd;
@@ -187,10 +222,14 @@ int cr_convert(void)
 	char sub_img_path[PATH_MAX];
 	DIR *dir;
 	struct dirent *ent;
-	// only initialize necessarg param
+	// only initialize necessary param
 	struct convert_ctl cc = { .dax_pgoff = 0 };
 
-	// open dax_device when necessary
+	if (cr_pseudo_mm_init()) {
+		pr_err("cr_pseudo_mm_init() failed\n");
+		return -1;
+	}
+
 	if (!opts.dax_device) {
 		pr_err("Must specify --dax-device for convert!\n");
 		return -1;

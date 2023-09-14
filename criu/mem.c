@@ -6,7 +6,6 @@
 #include <fcntl.h>
 #include <sys/syscall.h>
 #include <sys/prctl.h>
-#include <pseudo_mm.h>
 
 #include "types.h"
 #include "cr_options.h"
@@ -33,6 +32,7 @@
 #include "prctl.h"
 #include "compel/infect-util.h"
 #include "pidfd-store.h"
+#include "pseudo_mm.h"
 
 #include "protobuf.h"
 #include "images/pagemap.pb-c.h"
@@ -1462,9 +1462,23 @@ static int validate_vma_for_convert(struct vma_area *vma)
 		pr_err("Found unsupported vma for convert (%#lx - %#lx) status %#x\n", e->start, e->end, e->status);
 		return -1;
 	}
-	// TODO(huang-jl) this may have some undefined behavior
+	// TODO(huang-jl) this may have some undefined behavior:
+	// 1. I do not handle shared and anonymous speically in kernel.
+	// 2. For shared file-backed mapping, we have to map this area manually
+	// when restoring, so that it can point to the correct file on overlay fs.
 	if ((e->flags & MAP_SHARED) && (e->prot & PROT_WRITE)) {
-		pr_warn("Found writtable SHARED mapping (%#lx - %#lx)\n", e->start, e->end);
+		pr_err("Found writtable SHARED mapping (%#lx - %#lx)\n", e->start, e->end);
+		return -1;
+	}
+
+	if (e->has_madv && (e->madv & MADV_HUGEPAGE)) {
+		pr_err("Found MADV_HUGEPAGE mapping (%#lx - %#lx)\n", e->start, e->end);
+		return -1;
+	}
+
+	if (e->flags & MAP_HUGETLB) {
+		pr_err("Found MAP_HUGETLB mapping (%#lx - %#lx)\n", e->start, e->end);
+		return -1;
 	}
 	return 0;
 }
@@ -1727,7 +1741,6 @@ static int vma_setup_pt_for_convert(struct pstree_item *t, struct convert_ctl *c
 
 			BUG_ON(vma_area_is(vma, VMA_PREMMAPED));
 			if (!skip_vma_when_setup_pt(vma)) {
-				// TODO(huang-jl) set the pgoff in dax from convert control block
 				ret = pseudo_mm_setup_pt(cc->pseudo_mm_id, (void *)va, len, cc->dax_pgoff);
 				if (ret) {
 					pr_perror("setup page table of (%#lx - %#lx) to pgoff %#lx failed", va,

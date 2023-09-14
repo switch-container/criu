@@ -7,7 +7,6 @@ REQ-RPM-PKG-NAMES	+= protobuf-python
 REQ-RPM-PKG-NAMES	+= libnl3-devel
 REQ-RPM-PKG-NAMES	+= libcap-devel
 REQ-RPM-PKG-NAMES	+= $(PYTHON)-future
-REQ-RPM-PKG-NAMES	+= libpseudo_mm
 
 REQ-RPM-PKG-TEST-NAMES  += libaio-devel
 
@@ -19,7 +18,6 @@ REQ-DEB-PKG-NAMES	+= $(PYTHON)-protobuf
 REQ-DEB-PKG-NAMES	+= $(PYTHON)-future
 REQ-DEB-PKG-NAMES	+= libnl-3-dev
 REQ-DEB-PKG-NAMES	+= libcap-dev
-REQ-DEB-PKG-NAMES	+= libpseudo_mm
 
 REQ-DEB-PKG-TEST-NAMES	+= $(PYTHON)-yaml
 REQ-DEB-PKG-TEST-NAMES	+= libaio-dev
@@ -32,7 +30,7 @@ else
 REQ-RPM-PKG-TEST-NAMES	+= $(PYTHON)-pyyaml
 endif
 
-export LIBS		+= -lprotobuf-c -ldl -lnl-3 -lsoccr -Lsoccr/ -lnet -lpseudo_mm
+export LIBS		+= -lprotobuf-c -ldl -lnl-3 -lsoccr -Lsoccr/ -lnet
 
 check-packages-failed:
 	$(warning Can not find some of the required libraries)
