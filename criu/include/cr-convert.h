@@ -27,6 +27,9 @@ struct convert_ctl {
 	int curr_pme;
 };
 
+struct task_restore_args;
 /* Return 0 when succeed */
 extern int cr_convert(void);
+/* Called when restoring, reading pseudo_mm_id */
+extern int prepare_pseudo_mm_id(int vpid, struct task_restore_args *ta);
 #endif

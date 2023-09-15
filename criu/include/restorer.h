@@ -240,6 +240,9 @@ struct task_restore_args {
 
 	uid_t uid;
 	u32 cap_eff[CR_CAP_SIZE];
+
+	int pseudo_mm_id;
+	int pseudo_mm_dev_fd;
 } __aligned(64);
 
 /*

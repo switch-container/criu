@@ -574,6 +574,7 @@ usage:
 	       "Other options:\n"
 	       "  -h|--help             show this text\n"
 	       "  --dax-device PATH     set the dax device used for Command convert\n"
+	       "  --switch              start container switch, which needs switch-ns-xxx inherit_fds\n"
 	       "  -V|--version          show version\n");
 
 	return 0;

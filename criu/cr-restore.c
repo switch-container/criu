@@ -81,6 +81,7 @@
 #include "timens.h"
 #include "bpfmap.h"
 #include "apparmor.h"
+#include "pseudo_mm.h"
 
 #include "parasite-syscall.h"
 #include "files-reg.h"
@@ -976,6 +977,15 @@ static int restore_one_alive_task(int pid, CoreEntry *core)
 	// TODO(huang-jl) remove this
 	if (prepare_vmas(current, ta))
 		return -1;
+
+	if (prepare_pseudo_mm_id(pid, ta))
+		return -1;
+
+	ta->pseudo_mm_dev_fd = get_service_fd(PSEUDO_MM_DRIVER_OFF);
+	if (ta->pseudo_mm_dev_fd < 0) {
+		pr_err("do not install pseudo_mm_dev_fd\n");
+		return -1;
+	}
 
 	/*
 	 * Sockets have to be restored in their network namespaces,
@@ -1908,7 +1918,7 @@ static int restore_task_with_children(void *_arg)
 		// if (prepare_namespace(current, ca->clone_flags))
 		// 	goto err;
 
-		if (prepare_mnt_ns_for_switch()) {
+		if (opts.switch_ && prepare_mnt_ns_for_switch()) {
 			goto err;
 		}
 
@@ -2775,6 +2785,9 @@ int cr_restore_tasks(void)
 
 	if (prepare_lazy_pages_socket() < 0)
 		goto clean_cgroup;
+
+	if (cr_pseudo_mm_init())
+		goto err;
 
 	ret = restore_root_task(root_item);
 	pr_debug("restore_root_task() return %d\n", ret);

@@ -1486,7 +1486,9 @@ static int validate_vma_for_convert(struct vma_area *vma)
 static inline bool skip_vma_when_build_pseudo_mm(struct vma_area *vma)
 {
 	VmaEntry *e = vma->e;
-	const uint32_t skip_status = VMA_AREA_VDSO | VMA_AREA_VVAR | VMA_AREA_VSYSCALL;
+	// TODO(huang-jl) see the comments on skip_vma_when_setup_pt()
+	// const uint32_t skip_status = VMA_AREA_VDSO | VMA_AREA_VVAR | VMA_AREA_VSYSCALL;
+	const uint32_t skip_status = VMA_AREA_VVAR | VMA_AREA_VSYSCALL;
 	// if non-regular, then we need skip
 	if (!vma_area_is(vma, VMA_AREA_REGULAR))
 		return true;
@@ -1498,9 +1500,21 @@ static inline bool skip_vma_when_build_pseudo_mm(struct vma_area *vma)
 
 static inline int skip_vma_when_setup_pt(struct vma_area *vma)
 {
-	const uint32_t skip_status = VMA_AREA_VDSO;
-	if (vma->e->status & skip_status)
-		return true;
+	// TODO(huang-jl) it is possible to skip vsdo when setup_pt:
+	// In restorer, vdso_proxify() will try to compare the sym table
+	// of vdso between pages image and current system's vdso. If they
+	// matches, it will directly remap system's vdso to replace the
+	// vsdo area in checkpoint image.
+	// The main reason that CRIU checking this is that one checkpoint image
+	// might be used by many kernels, even with different major or minor
+	// kernel version.
+	//
+	// Since in our evaluation environment, we can make sure that
+	// vdso must match, because
+	// there will be no different kernels using the same image.
+	// const uint32_t skip_status = VMA_AREA_VDSO;
+	// if (vma->e->status & skip_status)
+	// 	return true;
 	return false;
 }
 

@@ -704,6 +704,7 @@ int parse_options(int argc, char **argv, bool *usage_error, bool *has_exec_cmd, 
 		BOOL_OPT("unprivileged", &opts.unprivileged),
 		BOOL_OPT("ghost-fiemap", &opts.ghost_fiemap),
 		{ "dax-device", required_argument, 0, 1234 },
+		{ "switch", no_argument, 0, 1235 },
 		{},
 	};
 
@@ -1052,6 +1053,9 @@ int parse_options(int argc, char **argv, bool *usage_error, bool *has_exec_cmd, 
 			return 2;
 		case 1234:
 			SET_CHAR_OPTS(dax_device, optarg);
+			break;
+		case 1235:
+			opts.switch_ = true;
 			break;
 		default:
 			return 2;

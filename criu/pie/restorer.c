@@ -38,6 +38,7 @@
 #include "vma.h"
 #include "uffd.h"
 #include "sched.h"
+#include "pseudo_mm.h"
 
 #include "common/lock.h"
 #include "common/page.h"
@@ -1513,7 +1514,7 @@ long __export_restore_task(struct task_restore_args *args)
 	int i;
 	VmaEntry *vma_entry;
 	unsigned long va;
-	struct restore_vma_io *rio;
+	// struct restore_vma_io *rio;
 	struct rt_sigframe *rt_sigframe;
 	struct prctl_mm_map prctl_map;
 	unsigned long new_sp;
@@ -1564,9 +1565,7 @@ long __export_restore_task(struct task_restore_args *args)
 	std_log_set_start(&args->logstart);
 
 	pr_info("Switched to the restorer %d\n", my_pid);
-	pr_debug("bootstrap start %p len %d vdso len %ld\n",
-		bootstrap_start, bootstrap_len, vdso_rt_size);
-
+	pr_debug("bootstrap start %p len %d vdso len %ld\n", bootstrap_start, bootstrap_len, vdso_rt_size);
 
 	if (args->uffd > -1) {
 		pr_debug("lazy-pages: uffd %d\n", args->uffd);
@@ -1604,7 +1603,7 @@ long __export_restore_task(struct task_restore_args *args)
 	if (unmap_old_vmas((void *)args->premmapped_addr, args->premmapped_len, bootstrap_start, bootstrap_len,
 			   args->task_size))
 		goto core_restore_end;
-	
+
 	sys_gettimeofday(&start, NULL);
 
 	/* Map vdso that wasn't parked */
@@ -1669,7 +1668,6 @@ long __export_restore_task(struct task_restore_args *args)
 
 	/*
 	 * OK, lets try to map new one.
-	 * TODO(huang-jl) replace this with pseudo_mm_attach
 	 */
 	for (i = 0; i < args->vmas_n; i++) {
 		vma_entry = args->vmas + i;
@@ -1680,62 +1678,74 @@ long __export_restore_task(struct task_restore_args *args)
 		if (vma_entry_is(vma_entry, VMA_PREMMAPED))
 			continue;
 
-		va = restore_mapping(vma_entry);
-
-		if (va != vma_entry->start) {
-			pr_err("Can't restore %" PRIx64 " mapping with %lx\n", vma_entry->start, va);
-			goto core_restore_end;
+		// only restore vvar
+		// TODO(huang-jl) see the comments in mem.c skip_vma_when_setup_pt()
+		// In future, we do not add_map and setup_pt for vdso area. Instead,
+		// we might directly remap vdso in system to vdso area in image.
+		if (vma_entry_is(vma_entry, VMA_AREA_VVAR)) {
+			va = restore_mapping(vma_entry);
+			if (va != vma_entry->start) {
+				pr_err("Can't restore %" PRIx64 " mapping with %lx\n", vma_entry->start, va);
+				goto core_restore_end;
+			}
 		}
 	}
 
 	/*
 	 * Now read the contents (if any)
 	 */
-
-	rio = args->vma_ios;
-	for (i = 0; i < args->vma_ios_n; i++) {
-		struct iovec *iovs = rio->iovs;
-		int nr = rio->nr_iovs;
-		ssize_t r;
-
-		while (nr) {
-			pr_debug("Preadv %lx:%d... (%d iovs)\n", (unsigned long)iovs->iov_base, (int)iovs->iov_len, nr);
-			r = sys_preadv(args->vma_ios_fd, iovs, nr, rio->off);
-			if (r < 0) {
-				pr_err("Can't read pages data (%d)\n", (int)r);
-				goto core_restore_end;
-			}
-
-			pr_debug("`- returned %ld\n", (long)r);
-			/* If the file is open for writing, then it means we should punch holes
-			 * in it. */
-			// default auto_dedup is 0 (in containerd & runc)
-			if (r > 0 && args->auto_dedup) {
-				int fr = sys_fallocate(args->vma_ios_fd, FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE,
-						       rio->off, r);
-				if (fr < 0) {
-					pr_debug("Failed to punch holes with fallocate: %d\n", fr);
-				}
-			}
-			rio->off += r;
-			/* Advance the iovecs */
-			do {
-				if (iovs->iov_len <= r) {
-					pr_debug("   `- skip pagemap\n");
-					r -= iovs->iov_len;
-					iovs++;
-					nr--;
-					continue;
-				}
-
-				iovs->iov_base += r;
-				iovs->iov_len -= r;
-				break;
-			} while (nr > 0);
-		}
-
-		rio = ((void *)rio) + RIO_SIZE(rio->nr_iovs);
+	ret = pseudo_mm_attach(args->pseudo_mm_dev_fd, args->pseudo_mm_id, my_pid);
+	if (ret) {
+		pr_err("cannot attach pseudo_mm %d to process %d", args->pseudo_mm_id, my_pid);
+		goto core_restore_end;
 	}
+
+	sys_close(args->pseudo_mm_dev_fd);
+
+	// rio = args->vma_ios;
+	// for (i = 0; i < args->vma_ios_n; i++) {
+	// 	struct iovec *iovs = rio->iovs;
+	// 	int nr = rio->nr_iovs;
+	// 	ssize_t r;
+
+	// 	while (nr) {
+	// 		pr_debug("Preadv %lx:%d... (%d iovs)\n", (unsigned long)iovs->iov_base, (int)iovs->iov_len, nr);
+	// 		r = sys_preadv(args->vma_ios_fd, iovs, nr, rio->off);
+	// 		if (r < 0) {
+	// 			pr_err("Can't read pages data (%d)\n", (int)r);
+	// 			goto core_restore_end;
+	// 		}
+
+	// 		pr_debug("`- returned %ld\n", (long)r);
+	// 		/* If the file is open for writing, then it means we should punch holes
+	// 		 * in it. */
+	// 		// default auto_dedup is 0 (in containerd & runc)
+	// 		if (r > 0 && args->auto_dedup) {
+	// 			int fr = sys_fallocate(args->vma_ios_fd, FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE,
+	// 					       rio->off, r);
+	// 			if (fr < 0) {
+	// 				pr_debug("Failed to punch holes with fallocate: %d\n", fr);
+	// 			}
+	// 		}
+	// 		rio->off += r;
+	// 		/* Advance the iovecs */
+	// 		do {
+	// 			if (iovs->iov_len <= r) {
+	// 				pr_debug("   `- skip pagemap\n");
+	// 				r -= iovs->iov_len;
+	// 				iovs++;
+	// 				nr--;
+	// 				continue;
+	// 			}
+
+	// 			iovs->iov_base += r;
+	// 			iovs->iov_len -= r;
+	// 			break;
+	// 		} while (nr > 0);
+	// 	}
+
+	// 	rio = ((void *)rio) + RIO_SIZE(rio->nr_iovs);
+	// }
 
 	if (args->vma_ios_fd != -1)
 		sys_close(args->vma_ios_fd);
@@ -2146,4 +2156,13 @@ void __stack_chk_fail(void)
 	pr_err("Restorer stack smash detected %ld\n", sys_getpid());
 	sys_exit_group(1);
 	BUG();
+}
+
+int pseudo_mm_attach(int fd, int id, pid_t pid)
+{
+	struct pseudo_mm_attach_param param = {
+		.id = id,
+		.pid = pid,
+	};
+	return sys_ioctl(fd, PSEUDO_MM_IOC_ATTACH, (unsigned long)&param);
 }
