@@ -913,9 +913,9 @@ static int restore_one_alive_task(int pid, CoreEntry *core)
 		return -1;
 
 	// [CR-MEM]
-	// TODO(huang-jl) remove this ?
-	if (open_vmas(current))
-		return -1;
+	// By huang-jl: remove this
+	// if (open_vmas(current))
+	// 	return -1;
 
 	if (prepare_aios(current, ta))
 		return -1;
@@ -974,7 +974,6 @@ static int restore_one_alive_task(int pid, CoreEntry *core)
 		return -1;
 
 	// [CR-MEM] copy vma_iovec and vma_entry and set the image fd
-	// TODO(huang-jl) remove this
 	if (prepare_vmas(current, ta))
 		return -1;
 
@@ -991,7 +990,7 @@ static int restore_one_alive_task(int pid, CoreEntry *core)
 	 * Sockets have to be restored in their network namespaces,
 	 * so a task namespace has to be restored after sockets.
 	 */
-	// TODO (huang-jl) solve the problem of `set_netns()`
+	// By huang-jl: solve the problem of `set_netns()`
 	// if (restore_task_net_ns(current))
 	// 	return -1;
 
@@ -1883,7 +1882,7 @@ static int restore_task_with_children(void *_arg)
 	 * just have it inherited.
 	 */
 
-	// TODO (huang-jl) do not need preapre cgroup
+	// By huang-jl: do not need preapre cgroup
 	// gettimeofday(&start, NULL);
 	// if (prepare_task_cgroup(current) < 0)
 	// 	goto err;
@@ -1943,9 +1942,9 @@ static int restore_task_with_children(void *_arg)
 	// if (restore_task_mnt_ns(current))
 	// 	goto err;
 
-	// TODO(huang-jl) remove this prepare_mappings
-	if (prepare_mappings(current))
-		goto err;
+	// By huang-jl: remove this prepare_mappings
+	// if (prepare_mappings(current))
+	// 	goto err;
 
 	if (prepare_sigactions(ca->core) < 0)
 		goto err;

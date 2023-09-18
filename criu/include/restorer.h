@@ -192,6 +192,8 @@ struct task_restore_args {
 	/* * * * * * * * * * * * * * * * * * * * */
 
 	unsigned long task_size;
+	// TODO(huang-jl) since we skip premap
+	// maybe we do not need these two variable any more
 	unsigned long premmapped_addr;
 	unsigned long premmapped_len;
 	rt_sigaction_t sigchld_act;

@@ -1389,7 +1389,7 @@ int open_vmas(struct pstree_item *t)
 	return 0;
 }
 
-static int prepare_vma_ios(struct pstree_item *t, struct task_restore_args *ta)
+__maybe_unused static int prepare_vma_ios(struct pstree_item *t, struct task_restore_args *ta)
 {
 	struct cr_img *pages;
 
@@ -1444,7 +1444,12 @@ int prepare_vmas(struct pstree_item *t, struct task_restore_args *ta)
 			vma_premmaped_start(vme) = vma->premmaped_addr;
 	}
 
-	return prepare_vma_ios(t, ta);
+	// return prepare_vma_ios(t, ta);
+	// skip prepare_vma_ios() since we are using pseudo_mm interface
+	ta->vma_ios = NULL;
+	ta->vma_ios_n = 0;
+	ta->vma_ios_fd = -1;
+	return 0;
 }
 
 /*
@@ -1475,9 +1480,13 @@ static int validate_vma_for_convert(struct vma_area *vma)
 		pr_err("Found MADV_HUGEPAGE mapping (%#lx - %#lx)\n", e->start, e->end);
 		return -1;
 	}
-
 	if (e->flags & MAP_HUGETLB) {
 		pr_err("Found MAP_HUGETLB mapping (%#lx - %#lx)\n", e->start, e->end);
+		return -1;
+	}
+
+	if (vma->pvma) {
+		pr_err("do not support vma->pvma for now (%#lx - %#lx)\n", e->start, e->end);
 		return -1;
 	}
 	return 0;
@@ -1571,9 +1580,7 @@ int prepare_mm_for_convert(struct pstree_item *i)
 		list_add_tail(&vma->list, &ri->vmas.h);
 
 		pr_info("vma 0x%" PRIx64 " 0x%" PRIx64 "\n", vma->e->start, vma->e->end);
-		if (validate_vma_for_convert(vma))
-			ret = -1;
-		else if (vma_area_is(vma, VMA_FILE_PRIVATE) || vma_area_is(vma, VMA_FILE_SHARED))
+		if (vma_area_is(vma, VMA_FILE_PRIVATE) || vma_area_is(vma, VMA_FILE_SHARED))
 			ret = collect_filemap(vma);
 		else
 			ret = 0;
@@ -1659,6 +1666,10 @@ int build_pseudo_mm_for_convert(struct pstree_item *t, struct convert_ctl *cc)
 	list_for_each_entry(vma, &vmas->h, list) {
 		VmaEntry *e = vma->e;
 		size_t len = e->end - e->start;
+		if (validate_vma_for_convert(vma)) {
+			ret = -1;
+			break;
+		}
 		if (skip_vma_when_build_pseudo_mm(vma)) {
 			pr_vma_with_prefix("build_pseudo_mm skip vma: ", vma);
 			continue;

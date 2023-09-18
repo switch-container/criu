@@ -1039,7 +1039,7 @@ static int enable_uffd(int uffd, unsigned long addr, unsigned long len)
 	return 0;
 }
 
-static int vma_remap(VmaEntry *vma_entry, int uffd)
+__maybe_unused static int vma_remap(VmaEntry *vma_entry, int uffd)
 {
 	unsigned long src = vma_premmaped_start(vma_entry);
 	unsigned long dst = vma_entry->start;
@@ -1265,37 +1265,23 @@ static void unregister_libc_rseq(struct rst_rseq_param *rseq)
 static int unmap_old_vmas(void *premmapped_addr, unsigned long premmapped_len, void *bootstrap_start,
 			  unsigned long bootstrap_len, unsigned long task_size)
 {
-	unsigned long s1, s2;
-	void *p1, *p2;
+	// unsigned long s1, s2;
+	// void *p1, *p2;
 	int ret;
-
-	if (premmapped_addr < bootstrap_start) {
-		p1 = premmapped_addr;
-		s1 = premmapped_len;
-		p2 = bootstrap_start;
-		s2 = bootstrap_len;
-	} else {
-		p2 = premmapped_addr;
-		s2 = premmapped_len;
-		p1 = bootstrap_start;
-		s1 = bootstrap_len;
-	}
-
-	ret = sys_munmap(NULL, p1 - NULL);
-	if (ret) {
-		pr_err("Unable to unmap (%p-%p): %d\n", NULL, p1, ret);
+	if (premmapped_addr != NULL || premmapped_len != 0) {
+		pr_err("premapped addr non null: %#lx, len = %#lx", (unsigned long)premmapped_addr, premmapped_len);
 		return -1;
 	}
 
-	ret = sys_munmap(p1 + s1, p2 - (p1 + s1));
+	ret = sys_munmap(NULL, bootstrap_start - NULL);
 	if (ret) {
-		pr_err("Unable to unmap (%p-%p): %d\n", p1 + s1, p2, ret);
+		pr_err("Unable to unmap (%p-%p): %d\n", NULL, bootstrap_start, ret);
 		return -1;
 	}
 
-	ret = sys_munmap(p2 + s2, task_size - (unsigned long)(p2 + s2));
+	ret = sys_munmap(bootstrap_start + bootstrap_len, task_size - (unsigned long)(bootstrap_start + bootstrap_len));
 	if (ret) {
-		pr_err("Unable to unmap (%p-%p): %d\n", p2 + s2, (void *)task_size, ret);
+		pr_err("Unable to unmap (%p-%p): %d\n", bootstrap_start + bootstrap_len, (void *)task_size, ret);
 		return -1;
 	}
 
@@ -1612,38 +1598,12 @@ long __export_restore_task(struct task_restore_args *args)
 
 	vdso_update_gtod_addr(&args->vdso_maps_rt);
 
-	/* Shift private vma-s to the left */
 	for (i = 0; i < args->vmas_n; i++) {
 		vma_entry = args->vmas + i;
-
-		if (!vma_entry_is(vma_entry, VMA_PREMMAPED))
-			continue;
-
-		if (vma_entry->end >= args->task_size)
-			continue;
-
-		if (vma_entry->start > vma_entry->shmid)
-			break;
-
-		if (vma_remap(vma_entry, args->uffd))
+		if (vma_entry_is(vma_entry, VMA_PREMMAPED)) {
+			pr_err("found unexpected VMA_PREMMAPED area!\n");
 			goto core_restore_end;
-	}
-
-	/* Shift private vma-s to the right */
-	for (i = args->vmas_n - 1; i >= 0; i--) {
-		vma_entry = args->vmas + i;
-
-		if (!vma_entry_is(vma_entry, VMA_PREMMAPED))
-			continue;
-
-		if (vma_entry->start > args->task_size)
-			continue;
-
-		if (vma_entry->start < vma_entry->shmid)
-			break;
-
-		if (vma_remap(vma_entry, args->uffd))
-			goto core_restore_end;
+		}
 	}
 
 	if (args->uffd > -1) {
@@ -1668,26 +1628,21 @@ long __export_restore_task(struct task_restore_args *args)
 
 	/*
 	 * OK, lets try to map new one.
+	 * By huang-jl: acutally we only need map vvar here
 	 */
 	for (i = 0; i < args->vmas_n; i++) {
 		vma_entry = args->vmas + i;
-
-		if (!vma_entry_is(vma_entry, VMA_AREA_REGULAR) && !vma_entry_is(vma_entry, VMA_AREA_AIORING))
-			continue;
-
-		if (vma_entry_is(vma_entry, VMA_PREMMAPED))
+		if (!vma_entry_is(vma_entry, VMA_AREA_VVAR))
 			continue;
 
 		// only restore vvar
 		// TODO(huang-jl) see the comments in mem.c skip_vma_when_setup_pt()
 		// In future, we do not add_map and setup_pt for vdso area. Instead,
 		// we might directly remap vdso in system to vdso area in image.
-		if (vma_entry_is(vma_entry, VMA_AREA_VVAR)) {
-			va = restore_mapping(vma_entry);
-			if (va != vma_entry->start) {
-				pr_err("Can't restore %" PRIx64 " mapping with %lx\n", vma_entry->start, va);
-				goto core_restore_end;
-			}
+		va = restore_mapping(vma_entry);
+		if (va != vma_entry->start) {
+			pr_err("Can't restore %" PRIx64 " mapping with %lx\n", vma_entry->start, va);
+			goto core_restore_end;
 		}
 	}
 
@@ -1701,51 +1656,6 @@ long __export_restore_task(struct task_restore_args *args)
 	}
 
 	sys_close(args->pseudo_mm_dev_fd);
-
-	// rio = args->vma_ios;
-	// for (i = 0; i < args->vma_ios_n; i++) {
-	// 	struct iovec *iovs = rio->iovs;
-	// 	int nr = rio->nr_iovs;
-	// 	ssize_t r;
-
-	// 	while (nr) {
-	// 		pr_debug("Preadv %lx:%d... (%d iovs)\n", (unsigned long)iovs->iov_base, (int)iovs->iov_len, nr);
-	// 		r = sys_preadv(args->vma_ios_fd, iovs, nr, rio->off);
-	// 		if (r < 0) {
-	// 			pr_err("Can't read pages data (%d)\n", (int)r);
-	// 			goto core_restore_end;
-	// 		}
-
-	// 		pr_debug("`- returned %ld\n", (long)r);
-	// 		/* If the file is open for writing, then it means we should punch holes
-	// 		 * in it. */
-	// 		// default auto_dedup is 0 (in containerd & runc)
-	// 		if (r > 0 && args->auto_dedup) {
-	// 			int fr = sys_fallocate(args->vma_ios_fd, FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE,
-	// 					       rio->off, r);
-	// 			if (fr < 0) {
-	// 				pr_debug("Failed to punch holes with fallocate: %d\n", fr);
-	// 			}
-	// 		}
-	// 		rio->off += r;
-	// 		/* Advance the iovecs */
-	// 		do {
-	// 			if (iovs->iov_len <= r) {
-	// 				pr_debug("   `- skip pagemap\n");
-	// 				r -= iovs->iov_len;
-	// 				iovs++;
-	// 				nr--;
-	// 				continue;
-	// 			}
-
-	// 			iovs->iov_base += r;
-	// 			iovs->iov_len -= r;
-	// 			break;
-	// 		} while (nr > 0);
-	// 	}
-
-	// 	rio = ((void *)rio) + RIO_SIZE(rio->nr_iovs);
-	// }
 
 	if (args->vma_ios_fd != -1)
 		sys_close(args->vma_ios_fd);

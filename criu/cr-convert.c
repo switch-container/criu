@@ -125,12 +125,6 @@ int convert_one_task(struct pstree_item *item, struct convert_ctl *cc)
 	// I think the (b) is better, since the overlayfs will changed
 	// each time when switching container. And we HOPE the file-backed
 	// mapping will point to the file in the overlayfs.
-	ret = prepare_mm_for_convert(item);
-	if (ret) {
-		pr_err("prepares_mm_for_convert() vpid %d failed\n", vpid(item));
-		return ret;
-	}
-
 	ret = build_pseudo_mm_for_convert(item, cc);
 	if (ret) {
 		pr_err("build_pseudo_mm_for_convert() vpid %d failed\n", vpid(item));
@@ -187,6 +181,19 @@ int convert_one_ctr(const char *path, struct convert_ctl *cc)
 		return -1;
 	}
 
+	// first prepare vma for each task
+	for_each_pstree_item(item) {
+		ret = prepare_mm_for_convert(item);
+		if (ret) {
+			pr_err("prepares_mm_for_convert() vpid %d failed\n", vpid(item));
+			return ret;
+		}
+	}
+	prepare_cow_vmas();
+
+	/**************************************
+	 * Start Convert
+	 **************************************/
 	for_each_pstree_item(item) {
 		if (open_convert_ctl(vpid(item), cc) <= 0)
 			return -1;
