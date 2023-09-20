@@ -4,7 +4,7 @@
 #include "types.h"
 #include "pseudo_mm_ioctl.h"
 
-#define PSEUDO_MM_DRIVER "/dev/pseudo_mm"
+#define PSEUDO_MM_INHERIT_ID "pseudo-mm-drv"
 
 /*
  * Create a new pseudo_mm.

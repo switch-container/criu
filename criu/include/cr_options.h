@@ -244,6 +244,7 @@ struct cr_options {
 	 * Path to the dax device (e.g., /dev/dax0.0)
 	 */
 	char *dax_device;
+	off_t dax_pgoff;
 };
 
 extern struct cr_options opts;

@@ -705,6 +705,7 @@ int parse_options(int argc, char **argv, bool *usage_error, bool *has_exec_cmd, 
 		BOOL_OPT("ghost-fiemap", &opts.ghost_fiemap),
 		{ "dax-device", required_argument, 0, 1234 },
 		{ "switch", no_argument, 0, 1235 },
+		{ "dax-pgoff", required_argument, 0, 1236 },
 		{},
 	};
 
@@ -1056,6 +1057,11 @@ int parse_options(int argc, char **argv, bool *usage_error, bool *has_exec_cmd, 
 			break;
 		case 1235:
 			opts.switch_ = true;
+			break;
+		case 1236:
+			opts.dax_pgoff = atoi(optarg);
+			if (opts.dax_pgoff < 0)
+				goto bad_arg;
 			break;
 		default:
 			return 2;

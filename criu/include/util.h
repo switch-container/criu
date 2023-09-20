@@ -417,4 +417,6 @@ extern struct timeval start_metric(void);
 // return interval start from tv
 extern long fini_metric(struct timeval tv);
 
+extern int mount_proc(void);
+
 #endif /* __CR_UTIL_H__ */

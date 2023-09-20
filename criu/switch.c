@@ -109,18 +109,13 @@ int join_switch_namespace(void)
 	return 0;
 }
 
-int stash_criu_original_mntns(void)
+int stash_criu_original_mntns(int *fd_id)
 {
 	// for now we only need stash mnt ns (and root dir)
-	char mnt_inherit_id[32];
 	int fd, proc_fd;
 
-	if (fill_inherit_switch_ns_key(SWITCH_NS_MNT, mnt_inherit_id)) {
-		return 1;
-	}
-	if (inherit_fd_lookup_id(mnt_inherit_id) < 0) {
+	if ((root_ns_mask & CLONE_NEWNS) == 0)
 		return 0;
-	}
 
 	proc_fd = get_service_fd(CR_PROC_FD_OFF);
 	if (proc_fd < 0) {
@@ -131,28 +126,31 @@ int stash_criu_original_mntns(void)
 	fd = openat(proc_fd, "self/ns/mnt", O_RDONLY | O_CLOEXEC);
 	if (fd < 0) {
 		pr_perror("get original mnt ns failed");
-		return 1;
+		return -1;
 	}
-	if (install_service_fd(SWITCH_ORIGINAL_MNTNS, fd) < 0) {
-		return 1;
+	*fd_id = fdstore_add(fd);
+	if (*fd_id < 0) {
+		return -1;
 	}
+
+	close_safe(&fd);
 
 	if (getcwd(original_pwd, sizeof(original_pwd)) == NULL) {
 		pr_perror("getcwd failed");
-		return 1;
+		return -1;
 	}
 
 	return 0;
 }
 
-int stash_pop_criu_original_mntns(void)
+int stash_pop_criu_original_mntns(int fd_id)
 {
 	int fd;
 	if (original_pwd[0] == 0) {
 		// no need to pop
 		return 0;
 	}
-	fd = get_service_fd(SWITCH_ORIGINAL_MNTNS);
+	fd = fdstore_get(fd_id);
 	if (setns(fd, CLONE_NEWNS)) {
 		pr_perror("set ns back to original mnt ns failed");
 		return 1;

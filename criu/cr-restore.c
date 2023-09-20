@@ -980,7 +980,7 @@ static int restore_one_alive_task(int pid, CoreEntry *core)
 	if (prepare_pseudo_mm_id(pid, ta))
 		return -1;
 
-	ta->pseudo_mm_dev_fd = get_service_fd(PSEUDO_MM_DRIVER_OFF);
+	ta->pseudo_mm_dev_fd = inherit_fd_lookup_id(PSEUDO_MM_INHERIT_ID);
 	if (ta->pseudo_mm_dev_fd < 0) {
 		pr_err("do not install pseudo_mm_dev_fd\n");
 		return -1;
@@ -1734,7 +1734,7 @@ static int __legacy_mount_proc(void)
 	return fd;
 }
 
-static int mount_proc(void)
+int mount_proc(void)
 {
 	int fd, ret;
 
@@ -2295,7 +2295,7 @@ static void reap_zombies(void)
 
 static int restore_root_task(struct pstree_item *init)
 {
-	int ret, fd, mnt_ns_fd = -1;
+	int ret, fd, mnt_ns_fd_id;
 	int root_seized = 0;
 	struct pstree_item *item;
 	// const struct timeval *tv;
@@ -2318,7 +2318,10 @@ static int restore_root_task(struct pstree_item *init)
 		return -1;
 
 	// we join switch namespace after install proc fd
-	stash_criu_original_mntns();
+	if (stash_criu_original_mntns(&mnt_ns_fd_id)) {
+		pr_err("stash criu original mnt ns failed\n");
+		return -1;
+	}
 	if (join_switch_namespace()) {
 		return -1;
 	}
@@ -2495,7 +2498,7 @@ skip_ns_bouncing:
 	// if (depopulate_roots_yard(mnt_ns_fd, false))
 	// 	goto out_kill;
 
-	close_safe(&mnt_ns_fd);
+	// close_safe(&mnt_ns_fd);
 
 	if (write_restored_pid())
 		goto out_kill;
@@ -2649,7 +2652,7 @@ skip_ns_bouncing:
 		reap_zombies();
 	}
 
-	if (stash_pop_criu_original_mntns()) {
+	if (stash_pop_criu_original_mntns(mnt_ns_fd_id)) {
 		return -1;
 	}
 	return 0;
@@ -2679,7 +2682,7 @@ out_kill:
 	}
 
 out:
-	if (stash_pop_criu_original_mntns()) {
+	if (stash_pop_criu_original_mntns(mnt_ns_fd_id)) {
 		return -1;
 	}
 	// depopulate_roots_yard(mnt_ns_fd, true);
@@ -2744,6 +2747,8 @@ int cr_restore_tasks(void)
 
 	timing_start(TIME_RESTORE);
 
+	// [operation not permitted]
+
 	if (cpu_init() < 0)
 		goto err;
 
@@ -2758,17 +2763,25 @@ int cr_restore_tasks(void)
 			goto err;
 	}
 
+	// [operation not permitted]
+
 	if (prepare_task_entries() < 0)
 		goto err;
 
+	// [operation not permitted]
+
 	if (prepare_pstree() < 0)
 		goto err;
+
+	// [operation not permitted]
 
 	if (fdstore_init())
 		goto err;
 
 	if (inherit_fd_move_to_fdstore())
 		goto err;
+
+	// [operation not permitted]
 
 	if (crtools_prepare_shared() < 0)
 		goto err;
@@ -2784,9 +2797,6 @@ int cr_restore_tasks(void)
 
 	if (prepare_lazy_pages_socket() < 0)
 		goto clean_cgroup;
-
-	if (cr_pseudo_mm_init())
-		goto err;
 
 	ret = restore_root_task(root_item);
 	pr_debug("restore_root_task() return %d\n", ret);

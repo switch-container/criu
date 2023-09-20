@@ -237,7 +237,7 @@ int main(int argc, char *argv[], char *envp[])
 	}
 
 	/* We must not open imgs dir, if service is called */
-	if (opts.mode != CR_SERVICE && opts.mode != CR_CONVERT) {
+	if (opts.mode != CR_SERVICE) {
 		ret = open_image_dir(opts.imgs_dir, image_dir_mode(argv, optind));
 		if (ret < 0) {
 			pr_err("Couldn't open image dir %s\n", opts.imgs_dir);
@@ -274,7 +274,7 @@ int main(int argc, char *argv[], char *envp[])
 		kdat.can_map_vdso = 0;
 
 	if (!list_empty(&opts.inherit_fds)) {
-		if (opts.mode != CR_RESTORE) {
+		if (opts.mode != CR_RESTORE && opts.mode != CR_CONVERT) {
 			pr_err("--inherit-fd is restore-only option\n");
 			return 1;
 		}

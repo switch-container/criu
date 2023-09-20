@@ -5,6 +5,7 @@
 #include "images/pagemap.pb-c.h"
 
 #define PSEUDO_MM_ID_FILE_TEMPLATE "pseudo_mm_id-%ld"
+#define CONVERT_PAGE_NUM_IMG "convert-pgnum.img"
 
 struct convert_ctl {
 	int (*advance)(struct convert_ctl *pr);
@@ -25,6 +26,8 @@ struct convert_ctl {
 	PagemapEntry **pmes;
 	int nr_pmes;
 	int curr_pme;
+
+	int nr_pages_mmap; /* how many pages being mmaped on dax*/
 };
 
 struct task_restore_args;

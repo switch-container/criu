@@ -3,12 +3,14 @@
  * checkpoint image generated from `dump` command into
  * pseudo_mm (which is a new kernel interface).
  */
+#include "include/fdstore.h"
+#include "include/namespaces.h"
+#include "include/switch.h"
 #include <unistd.h>
 #include <stdio.h>
 #include <sys/mman.h>
 #include <errno.h>
 #include <sys/syscall.h>
-#include <dirent.h>
 #include <sys/stat.h>
 
 #include "types.h"
@@ -63,23 +65,41 @@ static int mmap_pages_img(struct convert_ctl *cc)
 		pr_perror("unmap dax device area failed");
 		return -1;
 	}
+	cc->nr_pages_mmap += img_size >> PAGE_SHIFT;
 	pr_debug("map pages-%d.img to dax device off %#lx\n", cc->pages_img_id, cc->dax_pgoff << PAGE_SHIFT);
 	return 0;
 }
 
-static int generate_pseudo_mm_img(const char *path, struct convert_ctl *cc)
+static int generate_pseudo_mm_img(struct convert_ctl *cc)
 {
-	char path_buf[PATH_MAX];
+	char path_buf[128];
 	FILE *pseudo_mm_file;
+	int img_dir_fd = get_service_fd(IMG_FD_OFF);
 
-	pr_info("Start generate pseudo_mm-%ld img at %s...\n", cc->img_id, path);
-	sprintf(path_buf, "%s/" PSEUDO_MM_ID_FILE_TEMPLATE, path, cc->img_id);
-	pseudo_mm_file = fopen(path_buf, "w");
+	pr_info("Start generate pseudo_mm-%ld img at %s...\n", cc->img_id, opts.imgs_dir);
+	sprintf(path_buf, PSEUDO_MM_ID_FILE_TEMPLATE, cc->img_id);
+	pseudo_mm_file = fopenat(img_dir_fd, path_buf, "w");
 	if (!pseudo_mm_file) {
 		pr_err("Cannot open %s\n", path_buf);
 		return -1;
 	}
 	fprintf(pseudo_mm_file, "%d", cc->pseudo_mm_id);
+	fclose(pseudo_mm_file);
+
+	return 0;
+}
+
+static int generate_pages_num_img(struct convert_ctl *cc)
+{
+	FILE *pseudo_mm_file;
+	int img_dir_fd = get_service_fd(IMG_FD_OFF);
+
+	pseudo_mm_file = fopenat(img_dir_fd, CONVERT_PAGE_NUM_IMG, "w");
+	if (!pseudo_mm_file) {
+		pr_err("Cannot open " CONVERT_PAGE_NUM_IMG "\n");
+		return -1;
+	}
+	fprintf(pseudo_mm_file, "%d", cc->nr_pages_mmap);
 	fclose(pseudo_mm_file);
 
 	return 0;
@@ -133,52 +153,43 @@ int convert_one_task(struct pstree_item *item, struct convert_ctl *cc)
 	return 0;
 }
 
-static inline int install_new_image_dir_fd(const char *path)
-{
-	int img_dir_fd;
-	img_dir_fd = open(path, O_RDONLY);
-	if (img_dir_fd < 0) {
-		pr_err("open %s\n", path);
-		return -1;
-	}
-	if (close_service_fd(IMG_FD_OFF)) {
-		pr_err("close old service image fd failed\n");
-		return -1;
-	}
-	if (install_service_fd(IMG_FD_OFF, img_dir_fd) < 0) {
-		pr_err("install service image fd failed\n");
-		return -1;
-	}
-	return 0;
-}
-
-int convert_one_ctr(const char *path, struct convert_ctl *cc)
+int convert_one_ctr(struct convert_ctl *cc)
 {
 	int ret;
 	struct pstree_item *item;
 
-	pr_info("start convert for %s...\n", path);
-
-	if (install_new_image_dir_fd(path))
-		return -1;
-
 	if (check_img_inventory(true)) {
-		pr_err("check img inventory at %s failed\n", path);
+		pr_err("check img inventory at %s failed\n", opts.imgs_dir);
 		return -1;
 	}
 
 	if (prepare_task_entries()) {
-		pr_err("prepare taks entries at %s failed\n", path);
+		pr_err("prepare taks entries at %s failed\n", opts.imgs_dir);
 		return -1;
 	}
 	// read files.img
 	if (prepare_files()) {
-		pr_err("prepare files at %s failed\n", path);
+		pr_err("prepare files at %s failed\n", opts.imgs_dir);
 		return -1;
 	}
 	if (prepare_pstree() < 0) {
-		pr_err("prepare pstree at %s failed\n", path);
+		pr_err("prepare pstree at %s failed\n", opts.imgs_dir);
 		return -1;
+	}
+
+	if (mount_proc()) {
+		pr_err("mount proc failed\n");
+		return -1;
+	}
+	if (join_switch_namespace()) {
+		pr_err("join mnt namesapce failed\n");
+		return -1;
+	}
+	if (root_ns_mask & CLONE_NEWNS) {
+		if (prepare_mnt_ns_for_switch()) {
+			pr_err("prepare mnt ns for switch failed\n");
+			return -1;
+		}
 	}
 
 	// first prepare vma for each task
@@ -208,11 +219,14 @@ int convert_one_ctr(const char *path, struct convert_ctl *cc)
 		// here we get the new pseudo_mm_id for `item`
 		pr_info("convert task (vpid %d) to pseudo_mm %d\n", vpid(item), cc->pseudo_mm_id);
 		// write a file used for pseudo_mm_attach when restore
-		ret = generate_pseudo_mm_img(path, cc);
+		ret = generate_pseudo_mm_img(cc);
 		if (ret)
 			return ret;
 		cc->close(cc);
 	}
+	ret = generate_pages_num_img(cc);
+	if (ret)
+		return ret;
 	// clean up
 	root_item = NULL;
 	return 0;
@@ -225,18 +239,22 @@ int convert_one_ctr(const char *path, struct convert_ctl *cc)
 int cr_convert(void)
 {
 	int ret, dax_dev_fd;
-	const char *upper_img_dir = opts.imgs_dir;
-	char sub_img_path[PATH_MAX];
-	DIR *dir;
-	struct dirent *ent;
+	// how many pages located on dax device
 	// only initialize necessary param
-	struct convert_ctl cc = { .dax_pgoff = 0 };
+	struct convert_ctl cc = { .dax_pgoff = opts.dax_pgoff, .nr_pages_mmap = 0 };
 
-	if (cr_pseudo_mm_init()) {
-		pr_err("cr_pseudo_mm_init() failed\n");
+	if (fdstore_init()) {
+		pr_err("fdstore init failed\n");
 		return -1;
 	}
-
+	if (inherit_fd_move_to_fdstore()) {
+		pr_err("inherit fd move to fdstore failed\n");
+		return -1;
+	}
+	if (inherit_fd_lookup_id(PSEUDO_MM_INHERIT_ID) < 0) {
+		pr_err("cannot find " PSEUDO_MM_INHERIT_ID " in inherit fd list\n");
+		return -1;
+	}
 	if (!opts.dax_device) {
 		pr_err("Must specify --dax-device for convert!\n");
 		return -1;
@@ -255,25 +273,9 @@ int cr_convert(void)
 
 	pr_debug("register pseudo_mm with %s\n", opts.dax_device);
 
-	dir = opendir(upper_img_dir);
-	if (!dir) {
-		pr_err("Cannot open upper level image dir %s\n", upper_img_dir);
-		return -1;
-	}
-
-	while ((ent = readdir(dir)) != NULL) {
-		// skip "." and ".."
-		if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
-			continue;
-		// skip non-directory
-		if (ent->d_type != DT_DIR)
-			continue;
-		sprintf(sub_img_path, "%s/%s", upper_img_dir, ent->d_name);
-		pr_debug("Start cr convert at %s\n", sub_img_path);
-		ret = convert_one_ctr(sub_img_path, &cc);
-		if (ret)
-			return ret;
-	}
-	pr_debug("Finish cr convert at %s\n", upper_img_dir);
+	ret = convert_one_ctr(&cc);
+	if (ret)
+		return ret;
+	pr_debug("Finish cr convert at %s\n", opts.imgs_dir);
 	return 0;
 }
