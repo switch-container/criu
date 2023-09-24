@@ -134,7 +134,7 @@ int convert_one_task(struct pstree_item *item, struct convert_ctl *cc)
 {
 	int ret;
 
-	ret = pseudo_mm_create(&cc->pseudo_mm_id);
+	ret = pseudo_mm_create(cc->pseudo_mm_drv_fd, &cc->pseudo_mm_id);
 	if (ret) {
 		pr_err("create pseudo_mm failed\n");
 		return ret;
@@ -251,7 +251,8 @@ int cr_convert(void)
 		pr_err("inherit fd move to fdstore failed\n");
 		return -1;
 	}
-	if (inherit_fd_lookup_id(PSEUDO_MM_INHERIT_ID) < 0) {
+	cc.pseudo_mm_drv_fd = inherit_fd_lookup_id(PSEUDO_MM_INHERIT_ID);
+	if (cc.pseudo_mm_drv_fd < 0) {
 		pr_err("cannot find " PSEUDO_MM_INHERIT_ID " in inherit fd list\n");
 		return -1;
 	}
@@ -265,7 +266,7 @@ int cr_convert(void)
 		return -1;
 	}
 	cc.dax_dev_fd = dax_dev_fd;
-	ret = pseudo_mm_register(dax_dev_fd);
+	ret = pseudo_mm_register(cc.pseudo_mm_drv_fd, dax_dev_fd);
 	if (ret) {
 		pr_perror("Cannot register dax device for pseudo_mm!");
 		return -1;

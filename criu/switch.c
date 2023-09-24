@@ -26,7 +26,7 @@ static char original_pwd[256] = { 0 };
 int prepare_mnt_ns_for_switch(void)
 {
 	struct ns_id *nsid;
-	int num = 0, mntns_fd, root_fd;
+	int num = 0, mntns_fd, root_fd, proc_fd;
 	char *id = SWITCH_NS_KEY_PREFIX "mnt";
 
 	// we need chdir and chroot to the mnt namespace
@@ -66,6 +66,19 @@ int prepare_mnt_ns_for_switch(void)
 		pr_perror("mount proc fs failed");
 		return -1;
 	}
+
+	proc_fd = open("/proc", O_DIRECTORY);
+	if (proc_fd < 0) {
+		pr_perror("open /proc within prepare_mnt_ns_for_switch failed");
+		return -1;
+	}
+
+	if (set_proc_fd(proc_fd)) {
+		pr_err("set proc fd within prepare_mnt_ns_for_switch failed\n");
+		return -1;
+	}
+	close(proc_fd);
+	close(root_fd);
 
 	return 0;
 }

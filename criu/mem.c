@@ -713,17 +713,19 @@ int prepare_mm_pid(struct pstree_item *i)
 
 		pr_info("vma 0x%" PRIx64 " 0x%" PRIx64 "\n", vma->e->start, vma->e->end);
 
-		if (vma_area_is(vma, VMA_ANON_SHARED))
-			ret = collect_shmem(pid, vma);
-		else if (vma_area_is(vma, VMA_FILE_PRIVATE) || vma_area_is(vma, VMA_FILE_SHARED))
-			ret = collect_filemap(vma);
-		else if (vma_area_is(vma, VMA_AREA_SOCKET))
-			ret = collect_socket_map(vma);
-		else
-			ret = 0;
-		if (ret)
-			break;
+		// TODO(huang-jl) do not collect for vmas
+		// if (vma_area_is(vma, VMA_ANON_SHARED))
+		// 	ret = collect_shmem(pid, vma);
+		// else if (vma_area_is(vma, VMA_FILE_PRIVATE) || vma_area_is(vma, VMA_FILE_SHARED))
+		// 	ret = collect_filemap(vma);
+		// else if (vma_area_is(vma, VMA_AREA_SOCKET))
+		// 	ret = collect_socket_map(vma);
+		// else
+		// 	ret = 0;
+		// if (ret)
+		// 	break;
 	}
+	ret = 0;
 
 	if (img)
 		close_image(img);
@@ -1679,8 +1681,8 @@ int build_pseudo_mm_for_convert(struct pstree_item *t, struct convert_ctl *cc)
 			ret = -1;
 			break;
 		}
-		ret = pseudo_mm_add_map(cc->pseudo_mm_id, decode_pointer(e->start), len, e->prot, e->flags, e->fd,
-					e->pgoff);
+		ret = pseudo_mm_add_map(cc->pseudo_mm_drv_fd, cc->pseudo_mm_id, decode_pointer(e->start), len, e->prot,
+					e->flags, e->fd, e->pgoff);
 		if (ret) {
 			pr_err("pseudo_mm_add_map(%d, %#lx, %#lx, %#x, %#x, %ld, %#lx) failed\n", cc->pseudo_mm_id,
 			       e->start, len, e->prot, e->flags, e->fd, e->pgoff);
@@ -1766,7 +1768,8 @@ static int vma_setup_pt_for_convert(struct pstree_item *t, struct convert_ctl *c
 
 			BUG_ON(vma_area_is(vma, VMA_PREMMAPED));
 			if (!skip_vma_when_setup_pt(vma)) {
-				ret = pseudo_mm_setup_pt(cc->pseudo_mm_id, (void *)va, len, cc->dax_pgoff);
+				ret = pseudo_mm_setup_pt(cc->pseudo_mm_drv_fd, cc->pseudo_mm_id, (void *)va, len,
+							 cc->dax_pgoff);
 				if (ret) {
 					pr_perror("setup page table of (%#lx - %#lx) to pgoff %#lx failed", va,
 						  va + len, cc->dax_pgoff);

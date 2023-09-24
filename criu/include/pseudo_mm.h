@@ -9,47 +9,51 @@
 /*
  * Create a new pseudo_mm.
  *
+ * @drv_fd: the file descriptor of /dev/pseudo_mm driver
  * @id: The pointer used for save the id of newly created pseudo_mm.
  *
  * Return non-zero if error occurs, otherwise return 0.
  */
-int pseudo_mm_create(int *id);
+int pseudo_mm_create(int drv_fd, int *id);
 
 /*
  * Delete a pseudo_mm.
  *
+ * @drv_fd: the file descriptor of /dev/pseudo_mm driver
  * @id: The id of the pseudo_mm to be deleted. (Pass -1 means delete all)
  *
  * Return non-zero if error occurs, otherwise return 0.
  */
-int pseudo_mm_delete(int id);
+int pseudo_mm_delete(int drv_fd, int id);
 
 /*
  * Register the dax device to the pseudo_mm module in kernel.
  * (Should only be called once globally)
  *
+ * @drv_fd: the file descriptor of /dev/pseudo_mm driver
  * @fd: the file descriptor of the dax device (typically CXL-mem device or PMEM
  * device)
  *
  *
  * Return non-zero if error occurs, otherwise return 0.
  */
-int pseudo_mm_register(int fd);
+int pseudo_mm_register(int drv_fd, int fd);
 
 /*
  * Add a mmap to an existing pseudo_mm.
  *
+ * @drv_fd: the file descriptor of /dev/pseudo_mm driver
  * @id: the id of the target pseudo_mm.
  * @other params: the same as mmap().
  *
  * Return non-zero if error occurs, otherwise return 0.
  */
-int pseudo_mm_add_map(int id, void *start, size_t len, int prot, int flags,
-                      int fd, off_t offset);
+int pseudo_mm_add_map(int drv_fd, int id, void *start, size_t len, int prot, int flags, int fd, off_t offset);
 
 /*
  * Setup page table of an memory area, pointing to the registered dax device.
  *
+ * @drv_fd: the file descriptor of /dev/pseudo_mm driver
  * @id: the id of the target pseudo_mm.
  * @start: the start virtual address of area that needed setup page table.
  * @len: the length of area
@@ -57,24 +61,25 @@ int pseudo_mm_add_map(int id, void *start, size_t len, int prot, int flags,
  *
  * Return non-zero if error occurs, otherwise return 0.
  */
-int pseudo_mm_setup_pt(int id, void *start, size_t len, unsigned long pgoff);
+int pseudo_mm_setup_pt(int drv_fd, int id, void *start, size_t len, unsigned long pgoff);
 
 /*
  * Attach an existing pseudo_mm into a process.
  *
- * @fd: the fd of the pseudo_mm driver
+ * @drv_fd: the file descriptor of /dev/pseudo_mm driver
  * @id: the id of the pseudo_mm.
  * @pid: the target process.
  *
  * Return non-zero if error occurs, otherwise return 0.
  */
-int pseudo_mm_attach(int fd, int id, pid_t pid);
+int pseudo_mm_attach(int drv_fd, int id, pid_t pid);
 
 /*
  * Install /dev/pseudo_mm driver fd.
  *
+ * @drv_fd: the file descriptor of /dev/pseudo_mm driver
  * NOTE: call this function before switching the mnt namespace
  */
-int cr_pseudo_mm_init(void);
+int cr_pseudo_mm_init(int drv_fd);
 
 #endif

@@ -1649,9 +1649,14 @@ long __export_restore_task(struct task_restore_args *args)
 	/*
 	 * Now read the contents (if any)
 	 */
+
 	ret = pseudo_mm_attach(args->pseudo_mm_dev_fd, args->pseudo_mm_id, my_pid);
 	if (ret) {
 		pr_err("cannot attach pseudo_mm %d to process %d", args->pseudo_mm_id, my_pid);
+		goto core_restore_end;
+	}
+	interval = interval_from(&start);
+	if (interval < 0) {
 		goto core_restore_end;
 	}
 
@@ -1675,17 +1680,18 @@ long __export_restore_task(struct task_restore_args *args)
 	 * Walk though all VMAs again to drop PROT_WRITE
 	 * if it was not there.
 	 */
-	for (i = 0; i < args->vmas_n; i++) {
-		vma_entry = args->vmas + i;
+	// TODO(huang-jl) do not need this
+	//for (i = 0; i < args->vmas_n; i++) {
+	//	vma_entry = args->vmas + i;
 
-		if (!(vma_entry_is(vma_entry, VMA_AREA_REGULAR)))
-			continue;
+	//	if (!(vma_entry_is(vma_entry, VMA_AREA_REGULAR)))
+	//		continue;
 
-		if ((vma_entry->prot & PROT_WRITE) || (vma_entry->status & VMA_NO_PROT_WRITE))
-			continue;
+	//	if ((vma_entry->prot & PROT_WRITE) || (vma_entry->status & VMA_NO_PROT_WRITE))
+	//		continue;
 
-		sys_mprotect(decode_pointer(vma_entry->start), vma_entry_len(vma_entry), vma_entry->prot);
-	}
+	//	sys_mprotect(decode_pointer(vma_entry->start), vma_entry_len(vma_entry), vma_entry->prot);
+	//}
 
 	/*
 	 * Now when all VMAs are in their places time to set
@@ -2068,11 +2074,11 @@ void __stack_chk_fail(void)
 	BUG();
 }
 
-int pseudo_mm_attach(int fd, int id, pid_t pid)
+int pseudo_mm_attach(int drv_fd, int id, pid_t pid)
 {
 	struct pseudo_mm_attach_param param = {
 		.id = id,
 		.pid = pid,
 	};
-	return sys_ioctl(fd, PSEUDO_MM_IOC_ATTACH, (unsigned long)&param);
+	return sys_ioctl(drv_fd, PSEUDO_MM_IOC_ATTACH, (unsigned long)&param);
 }

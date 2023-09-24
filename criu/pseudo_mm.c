@@ -8,31 +8,22 @@
 #include "servicefd.h"
 #include "pseudo_mm.h"
 
-int pseudo_mm_create(int *id)
+int pseudo_mm_create(int drv_fd, int *id)
 {
-	int drv_fd = inherit_fd_lookup_id(PSEUDO_MM_INHERIT_ID);
-	if (drv_fd < 0)
-		return -1;
 	return ioctl(drv_fd, PSEUDO_MM_IOC_CREATE, (void *)id);
 }
 
-int pseudo_mm_delete(int id)
+int pseudo_mm_delete(int drv_fd, int id)
 {
-	int drv_fd = inherit_fd_lookup_id(PSEUDO_MM_INHERIT_ID);
-	if (drv_fd < 0)
-		return -1;
 	return ioctl(drv_fd, PSEUDO_MM_IOC_DELETE, (void *)&id);
 }
 
-int pseudo_mm_register(int fd)
+int pseudo_mm_register(int drv_fd, int fd)
 {
-	int drv_fd = inherit_fd_lookup_id(PSEUDO_MM_INHERIT_ID);
-	if (drv_fd < 0)
-		return -1;
 	return ioctl(drv_fd, PSEUDO_MM_IOC_REGISTER, (void *)&fd);
 }
 
-int pseudo_mm_add_map(int id, void *start, size_t len, int prot, int flags, int fd, off_t offset)
+int pseudo_mm_add_map(int drv_fd, int id, void *start, size_t len, int prot, int flags, int fd, off_t offset)
 {
 	struct pseudo_mm_add_map_param param = {
 		.id = id,
@@ -43,13 +34,10 @@ int pseudo_mm_add_map(int id, void *start, size_t len, int prot, int flags, int 
 		.fd = fd,
 		.offset = offset,
 	};
-	int drv_fd = inherit_fd_lookup_id(PSEUDO_MM_INHERIT_ID);
-	if (drv_fd < 0)
-		return -1;
 	return ioctl(drv_fd, PSEUDO_MM_IOC_ADD_MAP, (void *)&param);
 }
 
-int pseudo_mm_setup_pt(int id, void *start, size_t len, unsigned long pgoff)
+int pseudo_mm_setup_pt(int drv_fd, int id, void *start, size_t len, unsigned long pgoff)
 {
 	struct pseudo_mm_setup_pt_param param = {
 		.id = id,
@@ -57,8 +45,5 @@ int pseudo_mm_setup_pt(int id, void *start, size_t len, unsigned long pgoff)
 		.size = (unsigned long)len,
 		.pgoff = pgoff,
 	};
-	int drv_fd = inherit_fd_lookup_id(PSEUDO_MM_INHERIT_ID);
-	if (drv_fd < 0)
-		return -1;
 	return ioctl(drv_fd, PSEUDO_MM_IOC_SETUP_PT, (void *)&param);
 }

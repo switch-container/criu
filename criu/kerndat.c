@@ -420,7 +420,7 @@ static int kerndat_get_dirty_track(void)
 		pr_info("Dirty track supported on kernel\n");
 		kdat.has_dirty_track = true;
 	} else {
-	no_dt:
+no_dt:
 		pr_info("Dirty tracking support is OFF\n");
 	}
 
@@ -1077,8 +1077,8 @@ static int kerndat_has_openat2(void)
 	return 0;
 }
 
-#define KERNDAT_CACHE_NAME "criu.kdat"
-#define KERNDAT_CACHE_FILE KDAT_RUNDIR "/" KERNDAT_CACHE_NAME
+#define KERNDAT_CACHE_NAME	"criu.kdat"
+#define KERNDAT_CACHE_FILE	KDAT_RUNDIR "/" KERNDAT_CACHE_NAME
 #define KERNDAT_CACHE_FILE_BACK "/tmp/" KERNDAT_CACHE_NAME
 
 /*
@@ -1123,7 +1123,8 @@ static int get_kerndat_filename(char **kdat_file)
  * 0 if cache was loaded
  * 1 if cache does not exist or is stale or cache directory undefined in env (non-root mode)
  */
-static int _kerndat_try_load_cache_from(char* kdat_file) {
+static int _kerndat_try_load_cache_from(char *kdat_file)
+{
 	int fd, ret;
 
 	fd = open(kdat_file, O_RDONLY);
@@ -1203,7 +1204,8 @@ static int kerndat_try_load_cache(void)
 	// return 0;
 }
 
-static int _kerndat_save_cache_to(char* kdat_file) {
+static int _kerndat_save_cache_to(char *kdat_file)
+{
 	int fd, ret;
 	struct statfs s;
 	cleanup_free char *kdat_file_tmp = NULL;
@@ -1249,7 +1251,7 @@ static int _kerndat_save_cache_to(char* kdat_file) {
 
 	if (ret < 0) {
 		pr_perror("Couldn't save %s", kdat_file);
-	unl:
+unl:
 		unlink(kdat_file);
 	}
 
@@ -1265,13 +1267,12 @@ static void kerndat_save_cache(void)
 
 	if (get_kerndat_filename(&kdat_file))
 		return;
-	
+
 	if (_kerndat_save_cache_to(kdat_file) == 0) {
 		return;
 	}
 
 	_kerndat_save_cache_to(KERNDAT_CACHE_FILE_BACK);
-
 
 	// ret = asprintf(&kdat_file_tmp, "%s.tmp", kdat_file);
 
@@ -1693,10 +1694,19 @@ int kerndat_try_load_new(void)
 	if (ret < 0)
 		return ret;
 
-	ret = kerndat_has_ptrace_get_rseq_conf();
-	if (ret < 0) {
-		pr_err("kerndat_has_ptrace_get_rseq_conf failed when initializing kerndat.\n");
-		return ret;
+	// In qemu, kerndat_has_ptrace_get_rseq_conf() sometimes take
+	// about 1ms when RESTORE.
+	// To be honest, I do not know what rseq doing.
+	// I test that when skip this when RESTORE, it is fine.
+	if (opts.mode == CR_DUMP) {
+		ret = kerndat_has_ptrace_get_rseq_conf();
+		pr_debug("kerndat_has_ptrace_get_rseq_conf() finish\n");
+		if (ret < 0) {
+			pr_err("kerndat_has_ptrace_get_rseq_conf failed when initializing kerndat.\n");
+			return ret;
+		}
+	} else if (opts.mode == CR_RESTORE) {
+		kdat.has_ptrace_get_rseq_conf = false;
 	}
 
 	/* New information is found, we need to save to the cache */

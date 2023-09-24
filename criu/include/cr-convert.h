@@ -5,13 +5,18 @@
 #include "images/pagemap.pb-c.h"
 
 #define PSEUDO_MM_ID_FILE_TEMPLATE "pseudo_mm_id-%ld"
-#define CONVERT_PAGE_NUM_IMG "convert-pgnum.img"
+#define CONVERT_PAGE_NUM_IMG	   "convert-pgnum.img"
 
 struct convert_ctl {
 	int (*advance)(struct convert_ctl *pr);
 	void (*skip_pages)(struct convert_ctl *, unsigned long len);
 	void (*close)(struct convert_ctl *);
 
+	/* 
+	 * File descriptor of /dev/pseudo_mm.
+	 * In my implementation, it is read from inherit list
+	 */
+	int pseudo_mm_drv_fd;
 	int dax_dev_fd;
 	unsigned long dax_pgoff; /* page offset within the dax devices */
 	int pseudo_mm_id;	 /* current pseudo_mm_id, <0 means invalid */

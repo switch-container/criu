@@ -351,7 +351,7 @@ static int root_prepare_shared(void)
 	if (ret < 0)
 		goto err;
 
-	prepare_cow_vmas();
+	// prepare_cow_vmas();
 
 	ret = prepare_restorer_blob();
 	if (ret)
@@ -1904,9 +1904,9 @@ static int restore_task_with_children(void *_arg)
 		 * namespaces and do not care for the rest of the cases.
 		 * Thus -- mount proc at custom location for any new namespace
 		 */
-		// TODO (huang-jl) do not need mount proc
-		if (mount_proc())
-			goto err;
+		// By huang-jl: do not need mount proc, I mount it in prepare_mnt_ns_for_switch
+		// if (mount_proc())
+		// 	goto err;
 
 		if (!files_collected() && collect_image(&tty_cinfo))
 			goto err;

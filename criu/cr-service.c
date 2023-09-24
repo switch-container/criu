@@ -892,9 +892,9 @@ static int pre_dump_using_req(int sk, CriuOpts *req, bool single)
 			goto cout;
 
 		ret = 0;
-	cout:
+cout:
 		free_pidfd_store();
-	pidfd_store_err:
+pidfd_store_err:
 		exit(ret);
 	}
 
@@ -979,7 +979,7 @@ static int start_page_server_req(int sk, CriuOpts *req, bool daemon_mode)
 		}
 
 		ret = 0;
-	out_ch:
+out_ch:
 		if (daemon_mode && ret < 0 && pid > 0)
 			kill(pid, SIGKILL);
 		close(start_pipe[1]);
@@ -1215,7 +1215,7 @@ static int handle_cpuinfo(int sk, CriuReq *msg)
 			ret = cpuinfo_dump();
 		else
 			ret = cpuinfo_check();
-	cout:
+cout:
 		exit(ret);
 	}
 
