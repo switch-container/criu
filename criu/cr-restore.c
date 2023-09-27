@@ -1983,13 +1983,17 @@ static int restore_task_with_children(void *_arg)
 		 *
 		 * It means that all tasks entered into their namespaces.
 		 */
+		pr_debug("root start wait for other_tasks in restore_task_with_children\n");
 		if (restore_wait_other_tasks())
 			goto err;
 		fini_restore_mntns();
+		pr_debug("root switch to STATE_RESTORE in restore_task_with_children\n");
 		__restore_switch_stage(CR_STATE_RESTORE);
 	} else {
+		pr_debug("start finish restore_finish_stage\n");
 		if (restore_finish_stage(task_entries, CR_STATE_FORKING) < 0)
 			goto err;
+		pr_debug("finish restore_finish_stage\n");
 	}
 
 	if (restore_one_task(vpid(current), ca->core))
@@ -2639,6 +2643,11 @@ skip_ns_bouncing:
 
 	pr_info("Restore finished successfully. Tasks resumed.\n");
 	print_restore_timing();
+
+	if (stash_pop_criu_original_mntns(mnt_ns_fd_id)) {
+		return -1;
+	}
+	// TODO(huang-jl) remove this
 	write_stats(RESTORE_STATS);
 
 	/* This has the effect of dismissing the image streamer */
@@ -2652,9 +2661,6 @@ skip_ns_bouncing:
 		reap_zombies();
 	}
 
-	if (stash_pop_criu_original_mntns(mnt_ns_fd_id)) {
-		return -1;
-	}
 	return 0;
 
 out_kill_network_unlocked:

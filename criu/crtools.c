@@ -48,6 +48,8 @@
 #include "sysctl.h"
 #include "cr-convert.h"
 
+struct timeval global_main_start;
+
 void flush_early_log_to_stderr(void) __attribute__((destructor));
 
 void flush_early_log_to_stderr(void)
@@ -118,6 +120,7 @@ int main(int argc, char *argv[], char *envp[])
 	bool has_exec_cmd = false;
 	bool has_sub_command;
 	int state = PARSING_GLOBAL_CONF;
+	gettimeofday(&global_main_start, NULL);
 
 	BUILD_BUG_ON(CTL_32 != SYSCTL_TYPE__CTL_32);
 	BUILD_BUG_ON(__CTL_STR != SYSCTL_TYPE__CTL_STR);

@@ -42,6 +42,7 @@
 #include "common/scm.h"
 #include "uffd.h"
 #include "pidfd-store.h"
+#include "stats.h"
 
 #include "setproctitle.h"
 
@@ -1252,6 +1253,8 @@ int cr_service_work(int sk)
 {
 	int ret = -1;
 	CriuReq *msg = 0;
+	struct timeval now;
+	long interval;
 
 more:
 	opts.mode = CR_SWRK;
@@ -1269,6 +1272,10 @@ more:
 		ret = dump_using_req(sk, msg->opts);
 		break;
 	case CRIU_REQ_TYPE__RESTORE:
+		gettimeofday(&now, NULL);
+		interval = timeval_to_us(&now) - timeval_to_us(&global_main_start);
+		pr_debug("start sec: %ld s %ld us\n", global_main_start.tv_sec, global_main_start.tv_usec);
+		pr_debug("swrk start restore spent %ld us\n", interval);
 		ret = restore_using_req(sk, msg->opts);
 		break;
 	case CRIU_REQ_TYPE__CHECK:
