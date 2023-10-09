@@ -43,6 +43,8 @@ static const char *____criu_global_props_v2____[] = {
 	"cgroup.max.depth",
 	"cgroup.freeze",
 	"cgroup.type",
+	"cpu.max",
+	"memory.max",
 };
 // clang-format on
 
