@@ -591,7 +591,7 @@ static void noinline rst_sigreturn(unsigned long new_sp, struct rt_sigframe *sig
 	ARCH_RT_SIGRETURN(new_sp, sigframe);
 }
 
-static int send_cg_set(int sk, int cg_set)
+static __maybe_unused int send_cg_set(int sk, int cg_set)
 {
 	struct cmsghdr *ch;
 	struct msghdr h;
@@ -646,7 +646,7 @@ static int send_cg_set(int sk, int cg_set)
  * from the socket until getting its own thread id as an
  * acknowledge of successful threaded cgroup fixup
  */
-static int recv_cg_set_restore_ack(int sk)
+static __maybe_unused int recv_cg_set_restore_ack(int sk)
 {
 	struct cmsghdr *ch;
 	struct msghdr h = {};
@@ -716,12 +716,15 @@ long __export_restore_thread(struct thread_restore_args *args)
 	rt_sigframe = (void *)&args->mz->rt_sigframe;
 
 	if (args->cg_set != -1) {
-		pr_info("Restore cg_set in thread cg_set: %d\n", args->cg_set);
-		if (send_cg_set(args->cgroupd_sk, args->cg_set))
-			goto core_restore_end;
-		if (recv_cg_set_restore_ack(args->cgroupd_sk))
-			goto core_restore_end;
-		sys_close(args->cgroupd_sk);
+		// By huang-jl: for efficiency we do not support cgroupd
+		pr_err("do not support cgroupd for now!\n");
+		goto core_restore_end;
+		// pr_info("Restore cg_set in thread cg_set: %d\n", args->cg_set);
+		// if (send_cg_set(args->cgroupd_sk, args->cg_set))
+		// 	goto core_restore_end;
+		// if (recv_cg_set_restore_ack(args->cgroupd_sk))
+		// 	goto core_restore_end;
+		// sys_close(args->cgroupd_sk);
 	}
 
 	if (restore_thread_common(args))

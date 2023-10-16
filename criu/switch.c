@@ -117,6 +117,7 @@ int join_switch_namespace(void)
 			pr_err("fail to switch to namespace id = %s", id);
 			return 1;
 		}
+		close(target_ns_fd);
 	}
 
 	return 0;

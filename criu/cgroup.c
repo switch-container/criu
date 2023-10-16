@@ -2061,7 +2061,7 @@ int stop_cgroupd(void)
 	return 0;
 }
 
-static int prepare_cgroup_thread_sfd(void)
+static __maybe_unused int prepare_cgroup_thread_sfd(void)
 {
 	int sk;
 
@@ -2243,7 +2243,11 @@ int prepare_cgroup(void)
 		ret = prepare_cgroup_sfd(ce);
 		if (ret < 0)
 			return ret;
-		ret = prepare_cgroup_thread_sfd();
+		// By huang-jl: for efficiency we remove the cgroupd,
+		// sometimes it cause lots of latency.
+		// In our lambda, there is no cases that non-main
+		// threads live in different cgroup
+		// ret = prepare_cgroup_thread_sfd();
 	} else {
 		ret = 0;
 	}

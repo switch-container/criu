@@ -4002,8 +4002,11 @@ static int sigreturn_restore(pid_t pid, struct task_restore_args *task_args, uns
 		core_get_tls(tcore, &thread_args[i].tls);
 
 		if (tcore->thread_core->has_cg_set && rsti(current)->cg_set != tcore->thread_core->cg_set) {
-			thread_args[i].cg_set = tcore->thread_core->cg_set;
-			thread_args[i].cgroupd_sk = dup(get_service_fd(CGROUPD_SK));
+			// By huang-jl: we remove cgroupd for efficiency
+			pr_err("do not support cgroupd for now!\n");
+			goto err;
+			// thread_args[i].cg_set = tcore->thread_core->cg_set;
+			// thread_args[i].cgroupd_sk = dup(get_service_fd(CGROUPD_SK));
 		} else {
 			thread_args[i].cg_set = -1;
 		}
