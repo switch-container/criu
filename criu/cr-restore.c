@@ -3849,7 +3849,11 @@ static int sigreturn_restore(pid_t pid, struct task_restore_args *task_args, uns
 		goto err;
 	}
 
-	memzero(mem, memzone_size);
+
+	// By huang-jl: In linux 6.1.0-rc8, the memory page allocated
+	// for mmap is zeroed by Linux kernel, so at user-level we do not
+	// need memzero. And it is time-consumed, spent about 5ms.
+	// memzero(mem, memzone_size);
 	mz = mem;
 	mem += memzone_size;
 

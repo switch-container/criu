@@ -75,11 +75,15 @@ int pseudo_mm_setup_pt(int drv_fd, int id, void *start, size_t len, unsigned lon
 int pseudo_mm_attach(int drv_fd, int id, pid_t pid);
 
 /*
- * Install /dev/pseudo_mm driver fd.
+ * Bring back the physical page located on CXL memory into local memory.
+ * This method is mainly used for memory hierarchy.
  *
  * @drv_fd: the file descriptor of /dev/pseudo_mm driver
- * NOTE: call this function before switching the mnt namespace
+ * @id: the id of the pseudo_mm
+ * @start: the start virtual address that need to bring back local memory
+ * @len: the length of memory that need to bring back (must be 4K-aligned)
+ *
+ * Return non-zero if error occurs, otherwise return 0.
  */
-int cr_pseudo_mm_init(int drv_fd);
-
+int pseudo_mm_bring_back(int drv_fd, int id, void *start, size_t len);
 #endif

@@ -713,7 +713,7 @@ int prepare_mm_pid(struct pstree_item *i)
 
 		pr_info("vma 0x%" PRIx64 " 0x%" PRIx64 "\n", vma->e->start, vma->e->end);
 
-		// TODO(huang-jl) do not collect for vmas
+		// By huang-jl: do not need collect for vmas
 		// if (vma_area_is(vma, VMA_ANON_SHARED))
 		// 	ret = collect_shmem(pid, vma);
 		// else if (vma_area_is(vma, VMA_FILE_PRIVATE) || vma_area_is(vma, VMA_FILE_SHARED))

@@ -47,3 +47,13 @@ int pseudo_mm_setup_pt(int drv_fd, int id, void *start, size_t len, unsigned lon
 	};
 	return ioctl(drv_fd, PSEUDO_MM_IOC_SETUP_PT, (void *)&param);
 }
+
+int pseudo_mm_bring_back(int drv_fd, int id, void *start, size_t len)
+{
+	struct pseudo_mm_bring_back_param param = {
+		.id = id,
+		.start = (unsigned long)start,
+		.size = (unsigned long)len,
+	};
+	return ioctl(drv_fd, PSEUDO_MM_IOC_BRING_BACK, (void *)&param);
+}

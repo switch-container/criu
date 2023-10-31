@@ -2,7 +2,6 @@
 #define __PSEUDO_MM_IOCTL_H__
 
 #include <linux/ioctl.h>
-
 #include "types.h"
 
 #define PSEUDO_MM_IOC_MAGIC 0x1c
@@ -28,6 +27,14 @@ struct pseudo_mm_setup_pt_param {
 	unsigned long pgoff;
 };
 
+struct pseudo_mm_bring_back_param {
+	int id;
+	/* start virtual address */
+	unsigned long start;
+	/* size of memory area needed to be bring back */
+	unsigned long size;
+};
+
 struct pseudo_mm_attach_param {
 	pid_t pid;
 	int id;
@@ -45,5 +52,7 @@ struct pseudo_mm_attach_param {
 	_IOW(PSEUDO_MM_IOC_MAGIC, 0x04, struct pseudo_mm_setup_pt_param *)
 #define PSEUDO_MM_IOC_ATTACH \
 	_IOW(PSEUDO_MM_IOC_MAGIC, 0x05, struct pseudo_mm_attach_param *)
+#define PSEUDO_MM_IOC_BRING_BACK \
+	_IOW(PSEUDO_MM_IOC_MAGIC, 0x06, struct pseudo_mm_bring_back_param *)
 
 #endif
