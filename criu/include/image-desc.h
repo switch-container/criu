@@ -116,6 +116,8 @@ enum {
 
 	CR_FD_AUTOFS,
 
+	CR_FD_CONDENSE_MM,
+
 	CR_FD_MAX
 };
 

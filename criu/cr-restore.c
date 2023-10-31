@@ -1969,8 +1969,10 @@ static int restore_task_with_children(void *_arg)
 
 	sfds_protected = true;
 
-	if (unmap_guard_pages(current))
-		goto err;
+	// Note by huang-jl: actually we do not have premapped area
+	// in our evaluation functions.
+	// if (unmap_guard_pages(current))
+	// 	goto err;
 
 	restore_pgid();
 

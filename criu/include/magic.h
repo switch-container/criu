@@ -129,4 +129,6 @@
 
 #define KDAT_MAGIC 0x57023458 /* Torzhok */
 
+#define CONDENSE_MM_MAGIC 0x53304925 /*Tolyatti */
+
 #endif /* __CR_MAGIC_H__ */

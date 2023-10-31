@@ -31,9 +31,131 @@
 #include "images/pagemap.pb-c.h"
 #include "images/mm.pb-c.h"
 #include "images/pstree.pb-c.h"
+#include "imgset.h"
 
 #undef LOG_PREFIX
 #define LOG_PREFIX "converter: "
+
+static int _get_nr_vmas_of_condensed_mm(struct vm_area_list *vmas)
+{
+	struct vma_area *vma_area;
+	int nr_vmas = 0, nr_condensed_vmas = 0;
+	unsigned long begin = 0, end = 0;
+
+	list_for_each_entry(vma_area, &vmas->h, list) {
+		VmaEntry *vma = vma_area->e;
+		if (vma_entry_is(vma, VMA_AREA_VDSO) || vma_entry_is(vma, VMA_AREA_VVAR)) {
+			nr_vmas++;
+			if (begin != 0 && end != 0)
+				nr_condensed_vmas++;
+			begin = end = 0;
+			continue;
+		}
+		if (begin == 0) {
+			begin = vma->start;
+		} else {
+			assert(begin < vma->start);
+		}
+		assert(end < vma->end);
+		end = vma->end;
+	}
+	if (begin != 0 && end != 0)
+		nr_condensed_vmas++;
+
+	return nr_vmas + nr_condensed_vmas;
+}
+
+static struct vma_area *_new_condensed_vma(unsigned long begin, unsigned long end)
+{
+	struct vma_area *res;
+	res = alloc_vma_area();
+	if (res) {
+		res->e->start = begin;
+		res->e->end = end;
+		res->e->pgoff = 0;
+		res->e->prot = PROT_NONE;
+		res->e->flags = MAP_PRIVATE;
+		res->e->status = VMA_AREA_FAKE;
+	}
+	return res;
+}
+
+/*
+ * This function will generate a condensed mm image.
+ * The schema of image is the same as mm image.
+ *
+ * The reason I decide to create a condensed mm image is that
+ * when restoring, we only need VMA_AREA_VDSO while the other vma
+ * is restored by new kernel interface (i.e. pseudo_mm). So it is
+ * wasteful to read and parse the complete vma mappings image.
+ *
+ * [   ========= ====== ======= ======== ... ===    ======= =======     =====  ==         ]
+ *     ^ first vma                                  ^ vdso  ^ vvar
+ *     *****************************************    ******* *******     *********
+ *     ^ This is condense_vma_area                                      ^ This is condense_vma_area
+ */
+static int dump_converted_task_mm(struct pstree_item *item)
+{
+	MmEntry mme = MM_ENTRY__INIT;
+	// fake_vma_area is two fake area lies between VDSO and VVAR
+	struct vma_area *vma_area, *condense_vma_area;
+	struct rst_info *ri = rsti(item);
+	unsigned long begin = 0, end = 0;
+	int i = 0, ret;
+	struct cr_img *img;
+
+	mme = *ri->mm;
+
+	// 2-pass to generate condensed mm image:
+	// 1. the first pass is used to determine the number of vmas
+	// 2. the second pass is used to fill the mme
+	mme.n_vmas = _get_nr_vmas_of_condensed_mm(&ri->vmas);
+	mme.vmas = xmalloc(mme.n_vmas * sizeof(VmaEntry *));
+	if (!mme.vmas)
+		return 1;
+
+	pr_debug("convert task %d mm with %ld vmas\n", vpid(item), mme.n_vmas);
+
+	list_for_each_entry(vma_area, &ri->vmas.h, list) {
+		VmaEntry *vma = vma_area->e;
+		// we only care about VMA_AREA_VDSO and VVAR
+		if (vma_entry_is(vma, VMA_AREA_VDSO) || vma_entry_is(vma, VMA_AREA_VVAR)) {
+			if (begin != 0 && end != 0) {
+				condense_vma_area = _new_condensed_vma(begin, end);
+				if (condense_vma_area == NULL)
+					return 1;
+				mme.vmas[i++] = condense_vma_area->e;
+			}
+			begin = end = 0;
+			mme.vmas[i++] = vma;
+			continue;
+		}
+		if (begin == 0)
+			begin = vma->start;
+		end = vma->end;
+	}
+
+	if (begin != 0 && end != 0) {
+		condense_vma_area = _new_condensed_vma(begin, end);
+		if (condense_vma_area == NULL)
+			return 1;
+		mme.vmas[i++] = condense_vma_area->e;
+	}
+	img = open_image(CR_FD_CONDENSE_MM, O_DUMP, vpid(item));
+	if (!img) {
+		pr_err("open image CONDENSE_MM failed\n");
+		return 1;
+	}
+	ret = pb_write_one(img, &mme, PB_MM);
+	if (ret) {
+		pr_err("write mm entry failed!\n");
+		return 1;
+	}
+	close_image(img);
+
+	xfree(mme.vmas);
+	return 0;
+}
 
 static int mmap_pages_img(struct convert_ctl *cc)
 {
@@ -220,6 +342,9 @@ int convert_one_ctr(struct convert_ctl *cc)
 		pr_info("convert task (vpid %d) to pseudo_mm %d\n", vpid(item), cc->pseudo_mm_id);
 		// write a file used for pseudo_mm_attach when restore
 		ret = generate_pseudo_mm_img(cc);
+		if (ret)
+			return ret;
+		ret = dump_converted_task_mm(item);
 		if (ret)
 			return ret;
 		cc->close(cc);

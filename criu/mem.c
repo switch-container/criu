@@ -660,7 +660,10 @@ int prepare_mm_pid(struct pstree_item *i)
 	struct cr_img *img;
 	struct rst_info *ri = rsti(i);
 
-	img = open_image(CR_FD_MM, O_RSTR, pid);
+	// By huang-jl: see the note of dump_converted_task_mm()
+	// why I decide to use a condensed version of mm image.
+	// img = open_image(CR_FD_MM, O_RSTR, pid);
+	img = open_image(CR_FD_CONDENSE_MM, O_RSTR, pid);
 	if (!img)
 		return -1;
 
