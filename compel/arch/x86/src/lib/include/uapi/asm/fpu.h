@@ -21,7 +21,7 @@
 #define XSTATE_YMM 0x4
 
 #define FXSAVE_SIZE 512
-#define XSAVE_SIZE  4096
+#define XSAVE_SIZE  (4096 * 3)
 
 #define XSAVE_HDR_SIZE	 64
 #define XSAVE_HDR_OFFSET FXSAVE_SIZE
@@ -236,7 +236,7 @@ struct pkru_state {
  *
  * One page should be enough for the whole xsave state ;-)
  */
-#define EXTENDED_STATE_AREA_SIZE (4096 - sizeof(struct i387_fxsave_struct) - sizeof(struct xsave_hdr_struct))
+#define EXTENDED_STATE_AREA_SIZE (4096 * 3 - sizeof(struct i387_fxsave_struct) - sizeof(struct xsave_hdr_struct))
 
 /*
  * cpu requires it to be 64 byte aligned
