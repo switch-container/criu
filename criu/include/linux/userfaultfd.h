@@ -38,6 +38,7 @@
 #define _UFFDIO_WAKE	   (0x02)
 #define _UFFDIO_COPY	   (0x03)
 #define _UFFDIO_ZEROPAGE   (0x04)
+#define _UFFDIO_WRITEPROTECT		(0x06)
 #define _UFFDIO_API	   (0x3F)
 
 /* userfaultfd ioctl ids */
@@ -48,6 +49,8 @@
 #define UFFDIO_WAKE	  _IOR(UFFDIO, _UFFDIO_WAKE, struct uffdio_range)
 #define UFFDIO_COPY	  _IOWR(UFFDIO, _UFFDIO_COPY, struct uffdio_copy)
 #define UFFDIO_ZEROPAGE	  _IOWR(UFFDIO, _UFFDIO_ZEROPAGE, struct uffdio_zeropage)
+#define UFFDIO_WRITEPROTECT	_IOWR(UFFDIO, _UFFDIO_WRITEPROTECT, \
+				      struct uffdio_writeprotect)
 
 /* read() structure */
 struct uffd_msg {
@@ -178,6 +181,13 @@ struct uffdio_copy {
 	 * range according to the uffdio_register.ioctls.
 	 */
 #define UFFDIO_COPY_MODE_DONTWAKE ((__u64)1 << 0)
+		/*
+	 * UFFDIO_COPY_MODE_WP will map the page write protected on
+	 * the fly.  UFFDIO_COPY_MODE_WP is available only if the
+	 * write protected ioctl is implemented for the range
+	 * according to the uffdio_register.ioctls.
+	 */
+#define UFFDIO_COPY_MODE_WP			((__u64)1<<1)
 	__u64 mode;
 
 	/*
@@ -198,5 +208,26 @@ struct uffdio_zeropage {
 	 */
 	__s64 zeropage;
 };
+
+struct uffdio_writeprotect {
+	struct uffdio_range range;
+/*
+ * UFFDIO_WRITEPROTECT_MODE_WP: set the flag to write protect a range,
+ * unset the flag to undo protection of a range which was previously
+ * write protected.
+ *
+ * UFFDIO_WRITEPROTECT_MODE_DONTWAKE: set the flag to avoid waking up
+ * any wait thread after the operation succeeds.
+ *
+ * NOTE: Write protecting a region (WP=1) is unrelated to page faults,
+ * therefore DONTWAKE flag is meaningless with WP=1.  Removing write
+ * protection (WP=0) in response to a page fault wakes the faulting
+ * task unless DONTWAKE is set.
+ */
+#define UFFDIO_WRITEPROTECT_MODE_WP		((__u64)1<<0)
+#define UFFDIO_WRITEPROTECT_MODE_DONTWAKE	((__u64)1<<1)
+	__u64 mode;
+};
+
 
 #endif /* _LINUX_USERFAULTFD_H */

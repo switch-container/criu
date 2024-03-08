@@ -1016,7 +1016,7 @@ static int enable_uffd(int uffd, unsigned long addr, unsigned long len)
 
 	uffdio_register.range.start = addr;
 	uffdio_register.range.len = len;
-	uffdio_register.mode = UFFDIO_REGISTER_MODE_MISSING;
+	uffdio_register.mode = UFFDIO_REGISTER_MODE_MISSING | UFFDIO_REGISTER_MODE_WP;
 
 	pr_info("lazy-pages: register: %lx, len %lx\n", addr, len);
 
@@ -1026,7 +1026,7 @@ static int enable_uffd(int uffd, unsigned long addr, unsigned long len)
 		return -1;
 	}
 
-	expected_ioctls = (1 << _UFFDIO_WAKE) | (1 << _UFFDIO_COPY) | (1 << _UFFDIO_ZEROPAGE);
+	expected_ioctls = (1 << _UFFDIO_WAKE) | (1 << _UFFDIO_COPY) | (1 << _UFFDIO_ZEROPAGE | 1 << _UFFDIO_WRITEPROTECT);
 
 	if ((uffdio_register.ioctls & expected_ioctls) != expected_ioctls) {
 		pr_err("lazy-pages: unexpected missing uffd ioctl for anon memory\n");

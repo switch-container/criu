@@ -1,3 +1,5 @@
+#include "common/list.h"
+#include "log.h"
 #include <stddef.h>
 #include <stdio.h>
 #include <errno.h>
@@ -76,12 +78,20 @@ struct lazy_iov {
 	unsigned long img_start; /* start address at the dump time */
 };
 
+struct retry_pf_event {
+	struct list_head l;
+	__u64 address;
+	__u64 flags;
+};
+
 struct lazy_pages_info {
 	int pid;
 	bool exited;
 
 	struct list_head iovs;
 	struct list_head reqs;
+
+	struct list_head retry;
 
 	struct lazy_pages_info *parent;
 	unsigned ref_cnt;
@@ -91,6 +101,7 @@ struct lazy_pages_info {
 	unsigned long xfer_len; /* in pages */
 	unsigned long total_pages;
 	unsigned long copied_pages;
+	unsigned long wp_pages;
 
 	struct epoll_rfd lpfd;
 
@@ -124,6 +135,7 @@ static struct lazy_pages_info *lpi_init(void)
 	INIT_LIST_HEAD(&lpi->iovs);
 	INIT_LIST_HEAD(&lpi->reqs);
 	INIT_LIST_HEAD(&lpi->l);
+	INIT_LIST_HEAD(&lpi->retry);
 	lpi->lpfd.read_event = handle_uffd_event;
 	lpi->xfer_len = DEFAULT_XFER_LEN;
 	lpi->ref_cnt = 1;
@@ -844,23 +856,42 @@ static int uffd_check_op_error(struct lazy_pages_info *lpi, const char *op, int 
 	return 0;
 }
 
+static int add_retry_event(struct lazy_pages_info *lpi, __u64 address, __u64 flags)
+{
+	struct retry_pf_event *retry_event;
+	retry_event = xmalloc(sizeof(*retry_event));
+	if (!retry_event)
+		return -1;
+	retry_event->address = address;
+	retry_event->flags = flags;
+	list_add_tail(&retry_event->l, &lpi->retry);
+	return 0;
+}
+
 static int uffd_copy(struct lazy_pages_info *lpi, __u64 address, int *nr_pages)
 {
 	struct uffdio_copy uffdio_copy;
 	unsigned long len = *nr_pages * page_size();
+	int ret, saved_errno;
 
 	uffdio_copy.dst = address;
 	uffdio_copy.src = (unsigned long)lpi->buf;
 	uffdio_copy.len = len;
-	uffdio_copy.mode = 0;
+	uffdio_copy.mode = UFFDIO_COPY_MODE_WP;
 	uffdio_copy.copy = 0;
 
 	lp_debug(lpi, "uffd_copy: 0x%llx/%ld\n", uffdio_copy.dst, len);
-	if (ioctl(lpi->lpfd.fd, UFFDIO_COPY, &uffdio_copy) &&
-	    uffd_check_op_error(lpi, "copy", nr_pages, uffdio_copy.copy))
+	ret = ioctl(lpi->lpfd.fd, UFFDIO_COPY, &uffdio_copy);
+	saved_errno = errno;
+	if (ret != 0 && uffd_check_op_error(lpi, "copy", nr_pages, uffdio_copy.copy))
 		return -1;
+	if (ret != 0 && saved_errno == EAGAIN) {
+		if (add_retry_event(lpi, address, 0))
+			return -1;
+	}
 
 	lpi->copied_pages += *nr_pages;
+	lp_debug(lpi, "uffd copied pages: %ld/%ld\n", lpi->copied_pages, lpi->total_pages);
 
 	return 0;
 }
@@ -923,6 +954,7 @@ static int uffd_io_complete(struct page_read *pr, unsigned long img_addr, int nr
 static int uffd_zero(struct lazy_pages_info *lpi, __u64 address, int nr_pages)
 {
 	struct uffdio_zeropage uffdio_zeropage;
+	int ret, saved_errno;
 	unsigned long len = page_size() * nr_pages;
 
 	uffdio_zeropage.range.start = address;
@@ -930,9 +962,14 @@ static int uffd_zero(struct lazy_pages_info *lpi, __u64 address, int nr_pages)
 	uffdio_zeropage.mode = 0;
 
 	lp_debug(lpi, "zero page at 0x%llx\n", address);
-	if (ioctl(lpi->lpfd.fd, UFFDIO_ZEROPAGE, &uffdio_zeropage) &&
-	    uffd_check_op_error(lpi, "zero", &nr_pages, uffdio_zeropage.zeropage))
+	ret = ioctl(lpi->lpfd.fd, UFFDIO_ZEROPAGE, &uffdio_zeropage);
+	saved_errno = errno;
+	if (ret != 0 && uffd_check_op_error(lpi, "zero", &nr_pages, uffdio_zeropage.zeropage))
 		return -1;
+	if (ret != 0 && saved_errno == EAGAIN) {
+		if (add_retry_event(lpi, address, 0))
+			return -1;
+	}
 
 	return 0;
 }
@@ -1000,7 +1037,7 @@ static void update_xfer_len(struct lazy_pages_info *lpi, bool pf)
 		lpi->xfer_len = MAX_XFER_LEN;
 }
 
-static int xfer_pages(struct lazy_pages_info *lpi)
+static __maybe_unused int xfer_pages(struct lazy_pages_info *lpi)
 {
 	struct lazy_iov *iov;
 	unsigned int nr_pages;
@@ -1115,6 +1152,7 @@ static int complete_forks(int epollfd, struct epoll_event **events, int *nr_fds)
 	struct lazy_pages_info *lpi, *n;
 	struct epoll_event *tmp;
 
+	pr_debug("Complete Forks\n");
 	if (list_empty(&pending_lpis))
 		return 1;
 
@@ -1148,6 +1186,43 @@ static bool is_page_queued(struct lazy_pages_info *lpi, unsigned long addr)
 	return false;
 }
 
+static int handle_wp_page(struct lazy_pages_info *lpi, __u64 address, int nr)
+{
+	struct uffdio_writeprotect uffdio_wp;
+	unsigned long len = nr * page_size();
+	int ret, saved_errno;
+
+	uffdio_wp.range.start = address;
+	uffdio_wp.range.len = len;
+	uffdio_wp.mode = 0;
+
+	lp_debug(lpi, "uffd_writeprotect: 0x%llx/%ld\n", uffdio_wp.range.start, len);
+	ret = ioctl(lpi->lpfd.fd, UFFDIO_WRITEPROTECT, &uffdio_wp);
+	saved_errno = errno;
+	if (ret != 0) {
+		lp_debug(lpi, "write_protect:%ld errno:%d\n", len, errno);
+		// test if this error is recoverable error
+		if (errno == ENOSPC || errno == ESRCH) {
+			nr = 0;
+			handle_exit(lpi);
+		} else if (errno == EAGAIN || errno == ENOENT || errno == EEXIST) {
+			nr = 0;
+		} else {
+			// not ok
+			return -1;
+		}
+	}
+	if (ret != 0 && saved_errno == EAGAIN) {
+		if (add_retry_event(lpi, address, UFFD_PAGEFAULT_FLAG_WP))
+			return -1;
+	}
+
+	lpi->wp_pages += nr;
+	lp_debug(lpi, "uffd write protect pages: %ld/%ld\n", lpi->wp_pages, lpi->total_pages);
+
+	return 0;
+}
+
 static int handle_page_fault(struct lazy_pages_info *lpi, struct uffd_msg *msg)
 {
 	struct lazy_iov *iov;
@@ -1156,7 +1231,13 @@ static int handle_page_fault(struct lazy_pages_info *lpi, struct uffd_msg *msg)
 
 	/* Align requested address to the next page boundary */
 	address = msg->arg.pagefault.address & ~(page_size() - 1);
-	lp_debug(lpi, "#PF at 0x%llx\n", address);
+
+	if (msg->arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WP) {
+		lp_debug(lpi, "#PF (write-protect) at 0x%llx\n", msg->arg.pagefault.address);
+		return handle_wp_page(lpi, address, 1);
+	}
+
+	lp_debug(lpi, "#PF at 0x%llx\n", msg->arg.pagefault.address);
 
 	if (is_page_queued(lpi, address))
 		return 0;
@@ -1226,7 +1307,7 @@ static int handle_uffd_event(struct epoll_rfd *lpfd)
 	return 0;
 }
 
-static void lazy_pages_summary(struct lazy_pages_info *lpi)
+static __maybe_unused void lazy_pages_summary(struct lazy_pages_info *lpi)
 {
 	lp_debug(lpi, "UFFD transferred pages: (%ld/%ld)\n", lpi->copied_pages, lpi->total_pages);
 
@@ -1238,6 +1319,30 @@ static void lazy_pages_summary(struct lazy_pages_info *lpi)
 		return 1;
 	}
 #endif
+}
+
+// handle one retry event once a time
+static int retry_handle_pf(struct lazy_pages_info *lpi)
+{
+	struct retry_pf_event *retry_event;
+	struct uffd_msg msg;
+	int ret;
+
+	retry_event = list_first_entry(&lpi->retry, struct retry_pf_event, l);
+	if (!retry_event)
+		return 0;
+
+	lp_debug(lpi, "Retry page fault event for address %llx\n", retry_event->address);
+
+	msg.event = UFFD_EVENT_PAGEFAULT;
+	msg.arg.pagefault.address = retry_event->address;
+	msg.arg.pagefault.flags = retry_event->flags;
+	ret = handle_page_fault(lpi, &msg);
+	// if this retry failed, it will append a new retry event by itself
+	// so we just del this one without any condition
+	list_del(&retry_event->l);
+	xfree(retry_event);
+	return ret;
 }
 
 static int handle_requests(int epollfd, struct epoll_event **events, int nr_fds)
@@ -1262,21 +1367,28 @@ static int handle_requests(int epollfd, struct epoll_event **events, int nr_fds)
 
 		/* make sure we return success if there is nothing to xfer */
 		ret = 0;
-
 		list_for_each_entry_safe(lpi, n, &lpis, l) {
-			if (!list_empty(&lpi->iovs) && list_empty(&lpi->reqs)) {
-				ret = xfer_pages(lpi);
+			if (!list_empty(&lpi->retry)) {
+				ret = retry_handle_pf(lpi);
 				if (ret < 0)
 					goto out;
-				break;
-			}
-
-			if (list_empty(&lpi->reqs)) {
-				lazy_pages_summary(lpi);
-				list_del(&lpi->l);
-				lpi_put(lpi);
 			}
 		}
+
+		// list_for_each_entry_safe(lpi, n, &lpis, l) {
+		// 	if (!list_empty(&lpi->iovs) && list_empty(&lpi->reqs)) {
+		// 		ret = xfer_pages(lpi);
+		// 		if (ret < 0)
+		// 			goto out;
+		// 		break;
+		// 	}
+
+		// 	if (list_empty(&lpi->reqs)) {
+		// 		lazy_pages_summary(lpi);
+		// 		list_del(&lpi->l);
+		// 		lpi_put(lpi);
+		// 	}
+		// }
 
 		if (list_empty(&lpis))
 			break;
@@ -1350,6 +1462,7 @@ static int lazy_sk_read_event(struct epoll_rfd *rfd)
 	}
 
 	restore_finished = true;
+	pr_debug("restore finished!\n");
 
 	return 1;
 }
