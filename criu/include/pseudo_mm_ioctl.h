@@ -6,6 +6,11 @@
 
 #define PSEUDO_MM_IOC_MAGIC 0x1c
 
+enum pseudo_mm_pt_type {
+	DAX_MEM = 0x0,
+	RDMA_MEM = 0x1,
+};
+
 struct pseudo_mm_add_map_param {
 	int id;
 	unsigned long start;
@@ -25,6 +30,8 @@ struct pseudo_mm_setup_pt_param {
 	unsigned long size;
 	/* page offset in dax device (e.g., 1 means 1 * PAGE_SIZE) */
 	unsigned long pgoff;
+	/* page table entry types */
+	enum pseudo_mm_pt_type type;
 };
 
 struct pseudo_mm_bring_back_param {

@@ -706,6 +706,9 @@ int parse_options(int argc, char **argv, bool *usage_error, bool *has_exec_cmd, 
 		{ "dax-device", required_argument, 0, 1234 },
 		{ "switch", no_argument, 0, 1235 },
 		{ "dax-pgoff", required_argument, 0, 1236 },
+		{ "rdma-buf-sock-path", required_argument, 0, 1237 },
+		{ "rdma-pgoff", required_argument, 0, 1238 },
+		{ "mem-pool", required_argument, 0, 1239 },
 		{},
 	};
 
@@ -1062,6 +1065,24 @@ int parse_options(int argc, char **argv, bool *usage_error, bool *has_exec_cmd, 
 			opts.dax_pgoff = atoi(optarg);
 			if (opts.dax_pgoff < 0)
 				goto bad_arg;
+			break;
+		case 1237:
+			SET_CHAR_OPTS(rdma_buf_sock_path, optarg);
+			break;
+		case 1238:
+			opts.rdma_pgoff = atoi(optarg);
+			if (opts.rdma_pgoff < 0)
+				goto bad_arg;
+			break;
+		case 1239:
+			if (!strcmp("dax", optarg)) {
+				opts.mem_pool_type = DAX_MEM_POOL;
+			} else if (!strcmp("rdma", optarg)) {
+				opts.mem_pool_type = RDMA_MEM_POOL;
+			} else {
+				pr_err("Invalid value for --mem-pool: %s\n", optarg);
+				return 1;
+			}
 			break;
 		default:
 			return 2;

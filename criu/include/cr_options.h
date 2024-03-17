@@ -105,6 +105,11 @@ struct irmap_path_opt {
 	struct irmap *ir;
 };
 
+enum MEMORY_POOL_TYPE {
+	DAX_MEM_POOL,
+	RDMA_MEM_POOL,
+};
+
 enum criu_mode {
 	CR_UNSET = 0,
 	CR_DUMP,
@@ -245,6 +250,11 @@ struct cr_options {
 	 */
 	char *dax_device;
 	off_t dax_pgoff;
+	/* Unix domain socket path to the rdma buf socket*/
+	char *rdma_buf_sock_path;
+	/* The offset for the */
+	off_t rdma_pgoff;
+	int mem_pool_type;
 };
 
 extern struct cr_options opts;

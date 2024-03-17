@@ -37,13 +37,14 @@ int pseudo_mm_add_map(int drv_fd, int id, void *start, size_t len, int prot, int
 	return ioctl(drv_fd, PSEUDO_MM_IOC_ADD_MAP, (void *)&param);
 }
 
-int pseudo_mm_setup_pt(int drv_fd, int id, void *start, size_t len, unsigned long pgoff)
+int pseudo_mm_setup_pt(int drv_fd, int id, void *start, size_t len, unsigned long pgoff, enum pseudo_mm_pt_type type)
 {
 	struct pseudo_mm_setup_pt_param param = {
 		.id = id,
 		.start = (unsigned long)start,
 		.size = (unsigned long)len,
 		.pgoff = pgoff,
+		.type = type,
 	};
 	return ioctl(drv_fd, PSEUDO_MM_IOC_SETUP_PT, (void *)&param);
 }

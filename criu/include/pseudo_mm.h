@@ -5,6 +5,9 @@
 #include "pseudo_mm_ioctl.h"
 
 #define PSEUDO_MM_INHERIT_ID "pseudo-mm-drv"
+enum {
+	PSEUDO_MM_RDMA_BUF_SOCK_MAP = 0x1,
+};
 
 /*
  * Create a new pseudo_mm.
@@ -58,10 +61,11 @@ int pseudo_mm_add_map(int drv_fd, int id, void *start, size_t len, int prot, int
  * @start: the start virtual address of area that needed setup page table.
  * @len: the length of area
  * @pgoff: the page offset on dax device.
+ * @type: the type of the backend, currently support DAX_MEM and RDMA_MEM only
  *
  * Return non-zero if error occurs, otherwise return 0.
  */
-int pseudo_mm_setup_pt(int drv_fd, int id, void *start, size_t len, unsigned long pgoff);
+int pseudo_mm_setup_pt(int drv_fd, int id, void *start, size_t len, unsigned long pgoff, enum pseudo_mm_pt_type type);
 
 /*
  * Attach an existing pseudo_mm into a process.

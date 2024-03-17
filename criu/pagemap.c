@@ -958,6 +958,7 @@ static void convert_ctl_skip_page(struct convert_ctl *cc, unsigned long len)
 
 	if (pagemap_present(cc->pe)) {
 		cc->dax_pgoff += (len >> PAGE_SHIFT);
+		cc->rdma_pgoff += (len >> PAGE_SHIFT);
 	}
 }
 

@@ -1700,13 +1700,21 @@ int build_pseudo_mm_for_convert(struct pstree_item *t, struct convert_ctl *cc)
 	return vma_setup_pt_for_convert(t, cc);
 }
 
+/*
+ * Note by huang-jl: Not only anonymous private pages located in pages image
+ * private file mappings (after COWed) will also be in pages image.
+ *
+ * Actually, criu identified those pages need to be dumped to page image through
+ * /proc/<pid>/pagemap (61 bit)
+ */
 static int vma_setup_pt_for_convert(struct pstree_item *t, struct convert_ctl *cc)
 {
 	struct vma_area *vma;
 	int ret = 0;
 	struct list_head *vmas = &rsti(t)->vmas.h;
-
 	unsigned long va;
+	off_t setup_pt_pgoff;
+	enum pseudo_mm_pt_type setup_pt_type;
 
 	vma = list_first_entry(vmas, struct vma_area, list);
 	// rsti(t)->pages_img_id = cc->pages_img_id;
@@ -1771,16 +1779,30 @@ static int vma_setup_pt_for_convert(struct pstree_item *t, struct convert_ctl *c
 
 			BUG_ON(vma_area_is(vma, VMA_PREMMAPED));
 			if (!skip_vma_when_setup_pt(vma)) {
-				ret = pseudo_mm_setup_pt(cc->pseudo_mm_drv_fd, cc->pseudo_mm_id, (void *)va, len,
-							 cc->dax_pgoff);
-				if (ret) {
-					pr_perror("setup page table of (%#lx - %#lx) to pgoff %#lx failed", va,
-						  va + len, cc->dax_pgoff);
+				switch (opts.mem_pool_type) {
+				case DAX_MEM_POOL:
+					setup_pt_pgoff = cc->dax_pgoff;
+					setup_pt_type = DAX_MEM;
+					break;
+				case RDMA_MEM_POOL:
+					setup_pt_pgoff = cc->rdma_pgoff;
+					setup_pt_type = RDMA_MEM;
+					break;
+				default:
+					pr_err("unknown memory pool type: %d\n", opts.mem_pool_type);
 					ret = -1;
 					goto out;
 				}
-				pr_debug("setup page table of (%#lx - %#lx) to pgoff %#lx\n", va, va + len,
-					 cc->dax_pgoff);
+				ret = pseudo_mm_setup_pt(cc->pseudo_mm_drv_fd, cc->pseudo_mm_id, (void *)va, len,
+							 setup_pt_pgoff, setup_pt_type);
+				if (ret) {
+					pr_perror("setup page table of (%#lx - %#lx) to pgoff %#lx type %d failed", va,
+						  va + len, setup_pt_pgoff, setup_pt_type);
+					ret = -1;
+					goto out;
+				}
+				pr_debug("setup page table of (%#lx - %#lx) to pgoff %#lx type %d\n", va, va + len,
+					 setup_pt_pgoff, setup_pt_type);
 			} else {
 				char prefix[256];
 				sprintf(prefix, "setup_pt skip vma for pagemap (%#lx - %#lx): ", cc->pe->vaddr,

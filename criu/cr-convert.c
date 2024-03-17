@@ -25,6 +25,7 @@
 #include "crtools.h"
 #include "restorer.h"
 #include "pseudo_mm.h"
+#include "util-pie.h"
 
 #include "protobuf.h"
 #include "image-desc.h"
@@ -157,7 +158,55 @@ static int dump_converted_task_mm(struct pstree_item *item)
 	return 0;
 }
 
-static int mmap_pages_img(struct convert_ctl *cc)
+static int prepare_rdma_buf_sock(struct convert_ctl *cc)
+{
+	int len, sock_fd;
+	char *uds_path = opts.rdma_buf_sock_path;
+	struct sockaddr_un saddr;
+
+	// prepare addr
+	memset(&saddr, 0, sizeof(struct sockaddr_un));
+	saddr.sun_family = AF_UNIX;
+	len = snprintf(saddr.sun_path, sizeof(saddr.sun_path), "%s", uds_path);
+	if (len >= sizeof(saddr.sun_path)) {
+		pr_err("Wrong UNIX socket name: %s\n", uds_path);
+		return -1;
+	}
+	// connect
+	if ((sock_fd = socket(AF_UNIX, SOCK_STREAM, 0)) < 0) {
+		pr_perror("cretae socket failed");
+		return -1;
+	}
+	len = offsetof(struct sockaddr_un, sun_path) + strlen(saddr.sun_path);
+	if (connect(sock_fd, (struct sockaddr *)&saddr, len) < 0) {
+		pr_perror("connect to %s failed", saddr.sun_path);
+		close(sock_fd);
+		return -1;
+	}
+	cc->buf_sock_fd = sock_fd;
+	return 0;
+}
+
+static int mmap_pages_img_to_rdma_server(struct convert_ctl *cc)
+{
+	// first send a command
+	// then send the fd and pgoff
+	int cmd = PSEUDO_MM_RDMA_BUF_SOCK_MAP;
+	int ret;
+	ret = send(cc->buf_sock_fd, &cmd, sizeof(cmd), 0);
+	if (ret < 0) {
+		pr_perror("send cmd %d to buf sock failed", cmd);
+		return -1;
+	}
+	ret = send_fds(cc->buf_sock_fd, NULL, 0, &cc->pi->fd, 1, &cc->rdma_pgoff, sizeof(cc->rdma_pgoff));
+	if (ret != 0) {
+		pr_perror("send fds on buf_sock failed");
+		return -1;
+	}
+	return 0;
+}
+
+static int mmap_pages_img_to_dax(struct convert_ctl *cc)
 {
 	int ret;
 	struct stat stat_buf;
@@ -331,8 +380,12 @@ int convert_one_ctr(struct convert_ctl *cc)
 		if (open_convert_ctl(vpid(item), cc) <= 0)
 			return -1;
 		// mmap to dax device
-		if (mmap_pages_img(cc)) {
+		if (mmap_pages_img_to_dax(cc)) {
 			pr_err("fill dax device with pages-%d.img failed\n", cc->pages_img_id);
+			return -1;
+		}
+		if (mmap_pages_img_to_rdma_server(cc)) {
+			pr_err("fill rdma server with pages-%d.img failed\n", cc->pages_img_id);
 			return -1;
 		}
 		ret = convert_one_task(item, cc);
@@ -366,7 +419,7 @@ int cr_convert(void)
 	int ret, dax_dev_fd;
 	// how many pages located on dax device
 	// only initialize necessary param
-	struct convert_ctl cc = { .dax_pgoff = opts.dax_pgoff, .nr_pages_mmap = 0 };
+	struct convert_ctl cc = { .dax_pgoff = opts.dax_pgoff, .nr_pages_mmap = 0, .rdma_pgoff = opts.rdma_pgoff };
 
 	if (fdstore_init()) {
 		pr_err("fdstore init failed\n");
@@ -385,20 +438,39 @@ int cr_convert(void)
 		pr_err("Must specify --dax-device for convert!\n");
 		return -1;
 	}
+	if (!opts.rdma_buf_sock_path) {
+		pr_err("Must specify --rdma-buf-sock-addr for convert!\n");
+		return -1;
+	}
 	dax_dev_fd = open(opts.dax_device, O_RDWR);
 	if (dax_dev_fd < 0) {
 		pr_perror("Cannot open dax device %s", opts.dax_device);
 		return -1;
 	}
 	cc.dax_dev_fd = dax_dev_fd;
+	ret = prepare_rdma_buf_sock(&cc);
+	if (ret) {
+		pr_perror("Cannot prepare rdma buf socket!");
+		return -1;
+	}
 	ret = pseudo_mm_register(cc.pseudo_mm_drv_fd, dax_dev_fd);
 	if (ret) {
 		pr_perror("Cannot register dax device for pseudo_mm!");
 		return -1;
 	}
 
-	pr_debug("register pseudo_mm with %s\n", opts.dax_device);
-
+	pr_debug("register pseudo_mm: dax_device %s", opts.dax_device);
+	switch (opts.mem_pool_type) {
+	case DAX_MEM_POOL:
+		pr_debug(" using dax memory pool\n");
+		break;
+	case RDMA_MEM_POOL:
+		pr_debug(" using rdma memory pool\n");
+		break;
+	default:
+		pr_err(" invalid memory pool type: %d\n", opts.mem_pool_type);
+		return 1;
+	}
 	ret = convert_one_ctr(&cc);
 	if (ret)
 		return ret;

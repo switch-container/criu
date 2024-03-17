@@ -17,9 +17,12 @@ struct convert_ctl {
 	 * In my implementation, it is read from inherit list
 	 */
 	int pseudo_mm_drv_fd;
+	int pseudo_mm_id;	 /* current pseudo_mm_id, <0 means invalid */
+
 	int dax_dev_fd;
 	unsigned long dax_pgoff; /* page offset within the dax devices */
-	int pseudo_mm_id;	 /* current pseudo_mm_id, <0 means invalid */
+	int buf_sock_fd;
+	unsigned long rdma_pgoff;
 
 	struct cr_img *pmi; /* pagemap img */
 	struct cr_img *pi;  /* pages img */

@@ -575,10 +575,14 @@ usage:
 	       "  --no-default-config   forbid usage of default configuration files\n"
 	       "\n"
 	       "Other options:\n"
-	       "  -h|--help             show this text\n"
-	       "  --dax-device PATH     set the dax device used for Command convert\n"
-	       "  --switch              start container switch, which needs switch-ns-xxx inherit_fds\n"
-	       "  -V|--version          show version\n");
+	       "  -h|--help                    show this text\n"
+	       "  --switch                     start container switch, which needs switch-ns-xxx inherit_fds\n"
+	       "  --dax-device PATH            set the dax device used for Command convert\n"
+	       "  --dax-pgoff  OFFSET          set the dax start page offset for Command convert\n"
+	       "  --rdma-buf-sock-addr PATH    set the buf socket address of rdma memory pool server\n"
+	       "  --rdma-pgoff OFFSET          set the rdma start page offset for rdma memory pool\n"
+	       "  --mem-pool <dax | rdma>      set the type of backend memory pool of pseudo_mm\n"
+	       "  -V|--version                 show version\n");
 
 	return 0;
 
