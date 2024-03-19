@@ -23,6 +23,7 @@ struct convert_ctl {
 	unsigned long dax_pgoff; /* page offset within the dax devices */
 	int buf_sock_fd;
 	unsigned long rdma_pgoff;
+	int mem_pool_type;
 
 	struct cr_img *pmi; /* pagemap img */
 	struct cr_img *pi;  /* pages img */

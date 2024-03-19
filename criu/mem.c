@@ -1779,7 +1779,7 @@ static int vma_setup_pt_for_convert(struct pstree_item *t, struct convert_ctl *c
 
 			BUG_ON(vma_area_is(vma, VMA_PREMMAPED));
 			if (!skip_vma_when_setup_pt(vma)) {
-				switch (opts.mem_pool_type) {
+				switch (cc->mem_pool_type) {
 				case DAX_MEM_POOL:
 					setup_pt_pgoff = cc->dax_pgoff;
 					setup_pt_type = DAX_MEM;

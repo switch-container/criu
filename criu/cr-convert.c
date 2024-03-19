@@ -191,11 +191,26 @@ static int mmap_pages_img_to_rdma_server(struct convert_ctl *cc)
 {
 	// first send a command
 	// then send the fd and pgoff
-	int cmd = PSEUDO_MM_RDMA_BUF_SOCK_MAP;
+	int buf = PSEUDO_MM_RDMA_BUF_SOCK_MAP;
 	int ret;
-	ret = send(cc->buf_sock_fd, &cmd, sizeof(cmd), 0);
+	struct stat stat_buf;
+	size_t img_size;
+
+	// make sure image size is correct
+	ret = fstat(cc->pi->fd, &stat_buf);
+	if (ret) {
+		pr_perror("fstat pages img failed");
+		return -1;
+	}
+	img_size = stat_buf.st_size;
+	if (img_size & (PAGE_SIZE - 1)) {
+		pr_err("pages-%d.img's size not page align %ld\n", cc->pages_img_id, img_size);
+		return -1;
+	}
+
+	ret = send(cc->buf_sock_fd, &buf, sizeof(buf), 0);
 	if (ret < 0) {
-		pr_perror("send cmd %d to buf sock failed", cmd);
+		pr_perror("send cmd %d to buf sock failed", buf);
 		return -1;
 	}
 	ret = send_fds(cc->buf_sock_fd, NULL, 0, &cc->pi->fd, 1, &cc->rdma_pgoff, sizeof(cc->rdma_pgoff));
@@ -203,6 +218,15 @@ static int mmap_pages_img_to_rdma_server(struct convert_ctl *cc)
 		pr_perror("send fds on buf_sock failed");
 		return -1;
 	}
+	// we need sync with remote server in case that it did not
+	// recv fds but we close the connection.
+	ret = recv(cc->buf_sock_fd, &buf, sizeof(buf), 0);
+	if (ret != sizeof(buf) || buf != 0) {
+		pr_err("recv ack from buf socket failed!\n");
+		return -1;
+	}
+	pr_debug("map pages-%d.img to rdma off %#lx\n", cc->pages_img_id, cc->rdma_pgoff << PAGE_SHIFT);
+	cc->nr_pages_mmap += img_size >> PAGE_SHIFT;
 	return 0;
 }
 
@@ -379,14 +403,23 @@ int convert_one_ctr(struct convert_ctl *cc)
 	for_each_pstree_item(item) {
 		if (open_convert_ctl(vpid(item), cc) <= 0)
 			return -1;
-		// mmap to dax device
-		if (mmap_pages_img_to_dax(cc)) {
-			pr_err("fill dax device with pages-%d.img failed\n", cc->pages_img_id);
-			return -1;
-		}
-		if (mmap_pages_img_to_rdma_server(cc)) {
-			pr_err("fill rdma server with pages-%d.img failed\n", cc->pages_img_id);
-			return -1;
+		// NOTE by huang-jl: this two function (mmap_pages_img_to_xxx) will both
+		// modify cc->nr_pages_mmap. If in the future, you wants to mmap to both
+		// memory pool, please only update cc->nr_pages_mmap once!
+		switch (cc->mem_pool_type) {
+		case DAX_MEM_POOL:
+			// mmap to dax device
+			if (mmap_pages_img_to_dax(cc)) {
+				pr_err("fill dax device with pages-%d.img failed\n", cc->pages_img_id);
+				return -1;
+			}
+			break;
+		case RDMA_MEM_POOL:
+			if (mmap_pages_img_to_rdma_server(cc)) {
+				pr_err("fill rdma server with pages-%d.img failed\n", cc->pages_img_id);
+				return -1;
+			}
+			break;
 		}
 		ret = convert_one_task(item, cc);
 		if (ret)
@@ -419,7 +452,10 @@ int cr_convert(void)
 	int ret, dax_dev_fd;
 	// how many pages located on dax device
 	// only initialize necessary param
-	struct convert_ctl cc = { .dax_pgoff = opts.dax_pgoff, .nr_pages_mmap = 0, .rdma_pgoff = opts.rdma_pgoff };
+	struct convert_ctl cc = { .dax_pgoff = opts.dax_pgoff,
+				  .nr_pages_mmap = 0,
+				  .rdma_pgoff = opts.rdma_pgoff,
+				  .mem_pool_type = opts.mem_pool_type };
 
 	if (fdstore_init()) {
 		pr_err("fdstore init failed\n");
@@ -434,43 +470,42 @@ int cr_convert(void)
 		pr_err("cannot find " PSEUDO_MM_INHERIT_ID " in inherit fd list\n");
 		return -1;
 	}
-	if (!opts.dax_device) {
-		pr_err("Must specify --dax-device for convert!\n");
-		return -1;
-	}
-	if (!opts.rdma_buf_sock_path) {
-		pr_err("Must specify --rdma-buf-sock-addr for convert!\n");
-		return -1;
-	}
-	dax_dev_fd = open(opts.dax_device, O_RDWR);
-	if (dax_dev_fd < 0) {
-		pr_perror("Cannot open dax device %s", opts.dax_device);
-		return -1;
-	}
-	cc.dax_dev_fd = dax_dev_fd;
-	ret = prepare_rdma_buf_sock(&cc);
-	if (ret) {
-		pr_perror("Cannot prepare rdma buf socket!");
-		return -1;
-	}
-	ret = pseudo_mm_register(cc.pseudo_mm_drv_fd, dax_dev_fd);
-	if (ret) {
-		pr_perror("Cannot register dax device for pseudo_mm!");
-		return -1;
-	}
-
-	pr_debug("register pseudo_mm: dax_device %s", opts.dax_device);
-	switch (opts.mem_pool_type) {
+	switch (cc.mem_pool_type) {
 	case DAX_MEM_POOL:
-		pr_debug(" using dax memory pool\n");
+		if (!opts.dax_device) {
+			pr_err("Must specify --dax-device\n");
+			return -1;
+		}
+		pr_debug("convert using dax_device %s and dax memory pool\n", opts.dax_device);
+		dax_dev_fd = open(opts.dax_device, O_RDWR);
+		if (dax_dev_fd < 0) {
+			pr_perror("Cannot open dax device %s", opts.dax_device);
+			return -1;
+		}
+		ret = pseudo_mm_register(cc.pseudo_mm_drv_fd, dax_dev_fd);
+		if (ret) {
+			pr_perror("Cannot register dax device for pseudo_mm!");
+			return -1;
+		}
+		cc.dax_dev_fd = dax_dev_fd;
 		break;
 	case RDMA_MEM_POOL:
-		pr_debug(" using rdma memory pool\n");
+		if (!opts.rdma_buf_sock_path) {
+			pr_err("Must specify --rdma-buf-sock-path\n");
+			return -1;
+		}
+		ret = prepare_rdma_buf_sock(&cc);
+		if (ret) {
+			pr_perror("Cannot prepare rdma buf socket!");
+			return -1;
+		}
+		pr_debug("convert using rdma memory pool, rdma_buf_sock_path %s\n", opts.rdma_buf_sock_path);
 		break;
 	default:
 		pr_err(" invalid memory pool type: %d\n", opts.mem_pool_type);
 		return 1;
 	}
+
 	ret = convert_one_ctr(&cc);
 	if (ret)
 		return ret;
