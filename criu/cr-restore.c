@@ -1788,8 +1788,8 @@ static int restore_task_with_children(void *_arg)
 	struct cr_clone_arg *ca = _arg;
 	pid_t pid;
 	int ret;
-	struct timeval start, end;
-	long interval;
+	// struct timeval start, end;
+	// long interval;
 
 	current = ca->item;
 
@@ -1869,12 +1869,12 @@ static int restore_task_with_children(void *_arg)
 	 */
 
 	// TODO (huang-jl) do not need preapre cgroup
-	gettimeofday(&start, NULL);
-	if (prepare_task_cgroup(current) < 0)
-		goto err;
-	gettimeofday(&end, NULL);
-	interval = timeval_to_us(&end) - timeval_to_us(&start);
-	pr_debug("METRIC [pid:%d] prepare task cgroup spent %ld us\n", pid, interval);
+	// gettimeofday(&start, NULL);
+	// if (prepare_task_cgroup(current) < 0)
+	// 	goto err;
+	// gettimeofday(&end, NULL);
+	// interval = timeval_to_us(&end) - timeval_to_us(&start);
+	// pr_debug("METRIC [pid:%d] prepare task cgroup spent %ld us\n", pid, interval);
 
 	/* Restore root task */
 	if (current->parent == NULL) {
